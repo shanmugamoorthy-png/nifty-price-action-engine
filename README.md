@@ -1,54 +1,62 @@
-# NIFTY Pure Price Action Engine
+# NIFTY Pure Price Action Engine V3
 
-Streamlit dashboard for NIFTY Spot using DhanHQ v2 historical intraday API.
+## What changed in V3
+- Advanced price action: confirmed swing pivots, BOS, CHoCH, liquidity sweeps, opening-range breaks, previous-day high/low breaks.
+- Combined entry with no extra breakout-distance filter and no mandatory retest.
+- Separate intraday and positional portfolios/backtests.
+- Correct cost accounting: slippage affects index-point fills; brokerage is reported separately in INR and is never subtracted from index points.
+- Conservative OHLC execution: if stop and target both touch in the same candle, stop is assumed first.
+- Five-year Dhan 5-minute downloader in 85-calendar-day batches.
+- Streamlit dashboard, Telegram test, continuous polling worker.
+- Persistent Render disk for historical data and separate worker state disk.
 
-## Features
-- Five-year 5-minute historical downloader (85-calendar-day batches; Dhan limit is 90 days/request).
-- Pure price-action setups: confirmed swing breaks (BOS), opening-range breakout, previous-day high/low breaks, breakout retests and false-break rejection.
-- Intraday and positional backtesting.
-- Separate always-on worker checks completed candles and sends BUY/SELL/EXIT Telegram alerts.
-- No indicator, OI or volume dependency for signal generation.
-- No automatic order placement.
+## Dhan setup
+Dhan v2 intraday endpoint: `POST https://api.dhan.co/v2/charts/intraday`
+- `securityId=13`
+- `exchangeSegment=IDX_I`
+- `instrument=INDEX`
+- `interval=5`
+- `oi=false`
 
-## Important limitations / assumptions
-1. NIFTY Spot is an index, not a tradable security. Backtest output is index points, not option/futures rupee P&L.
-2. Five-year availability is subject to Dhan Data API entitlement, token validity, and instrument data availability.
-3. Dhan intraday endpoint accepts intervals 1, 5, 15, 25, 60 and up to 90 calendar days per request.
-4. Historical data is downloaded to `data/nifty_5min.csv`. Render ephemeral disks are not durable. Use a paid persistent disk or object storage for production data.
-5. The Render Blueprint defines a separate always-on background worker for Telegram BUY/SELL/EXIT alerts. Both web and worker services use paid Starter plans and persistent disks. Set `LIVE_MODE` to `Intraday` or `Positional` in the worker environment.
-6. Backtest assumptions are simplified: next-candle open fills, fixed stop/target, conservative stop-first if both touched within one bar, one position at a time. Validate with more granular data before real trading.
+Dhan documents 1/5/15/25/60-minute candles and a maximum 90-calendar-day request window. Five-year availability is subject to the instrument being active and the user's Dhan API/data access.
 
-## Run locally
+## Cost accounting
+- `gross_points`: raw index points before slippage.
+- `net_points`: index points after adverse slippage on entry and exit.
+- `brokerage_inr`: user-entered estimated brokerage per completed round trip, shown in INR separately.
+- This project does NOT convert NIFTY Spot index points into rupees. It does not include exchange transaction charges, GST, STT, stamp duty or other statutory fees.
+- For actual ₹ P&L, backtest a specified NIFTY futures or options contract with its lot size, price, expiry and actual charges. NIFTY Spot is not directly tradable.
+
+## Local run
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
+# Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Fill in your own credentials in .env; never commit it.
+# Fill .env locally; never commit it.
 streamlit run app.py
 ```
 
-## Dhan configuration
-- Security ID: 13
-- Exchange segment: IDX_I
-- Instrument: INDEX
-- Interval: 5
-- API base: https://api.dhan.co/v2
-- Historical endpoint: POST /charts/intraday
+## Render deployment
+1. Push all project files to GitHub. Never upload `.env`, API tokens or Telegram secrets.
+2. For a new Render Blueprint, select this repository; `render.yaml` defines the Streamlit web service and separate alert worker.
+3. Both services use Starter compute and each has its own 1 GB persistent disk. The worker disk stores alert deduplication state; the web disk stores the CSV.
+4. Enter the same Dhan and Telegram secrets for both services when prompted.
+5. If updating an existing manually-created service, update its code from GitHub and add a persistent disk at `/var/data` in the Render dashboard. Create the worker service separately or apply the Blueprint.
+6. Verify the worker logs show `NIFTY alert worker started`.
 
-## GitHub
-Create a private repository, upload project files, and keep `.env` excluded. Add the four secret environment variables in Render dashboard.
+A Render disk belongs to one service and cannot be shared between the web service and worker. The worker only needs its own small alert-state database; it fetches current candles directly from Dhan.
 
-## Render
-1. Push this folder to GitHub.
-2. In Render choose New > Blueprint and select the repository.
-3. `render.yaml` declares a paid Starter web service and a paid Starter background worker, each with a persistent disk. Render plan and disk charges apply.
-4. Enter secrets when prompted. Configure `LIVE_MODE` as `Intraday` or `Positional` on the worker.
-5. Deploy and open the service URL. The worker independently sends alerts while running.
+## Worker behaviour
+The worker polls recent 5-minute historical candles every `POLL_SECONDS` (default 60), ignores unfinished candles, and maintains separate virtual Intraday and Positional alert positions. It sends BUY/SELL entry and EXIT alerts for stop, target, opposite signal and intraday square-off. It is not an exchange websocket and does not guarantee delivery during API outages, expired tokens, market holidays or service downtime. It does not place orders or manage actual broker positions.
 
-## Telegram
-Create a bot with BotFather, send it a message, then obtain your chat ID using Telegram's bot API or a trusted bot utility. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in Render.
-
-## Strategy logic notes
-Confirmed swing levels are only made available after `pivot_right` bars have elapsed, reducing look-ahead bias. ORB uses the 09:15–09:30 IST opening range. Signals are based on completed 5-minute candles.
+## Backtest assumptions
+- Strategy signals are calculated on candle close and entered at the next candle open.
+- Intraday positions are squared off using the 15:15 candle close (approx 15:20 IST); no new intraday entries after 15:00.
+- Positional trades can carry overnight.
+- Opposite completed-candle signal exits at next candle open.
+- If stop and target are both touched in a candle, stop is filled first.
+- A gap through a stop is filled at the candle open.
+- One open position per independent portfolio.
+- Backtest is educational research, not a promise of future performance.

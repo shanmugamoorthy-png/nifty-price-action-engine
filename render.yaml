@@ -1,17 +1,20 @@
 services:
   - type: web
-    name: nifty-pure-price-action
+    name: nifty-price-action-engine
     runtime: python
     plan: starter
+    region: singapore
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     disk:
-      name: nifty-data
-      mountPath: /opt/render/project/src/data
+      name: nifty-history
+      mountPath: /var/data
       sizeGB: 1
-    envVars: &common_env
+    envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: DATA_DIR
+        value: /var/data
       - key: DHAN_CLIENT_ID
         sync: false
       - key: DHAN_ACCESS_TOKEN
@@ -30,15 +33,18 @@ services:
     name: nifty-price-action-alert-worker
     runtime: python
     plan: starter
+    region: singapore
     buildCommand: pip install -r requirements.txt
-    startCommand: python monitor_worker.py
+    startCommand: python alert_worker.py
     disk:
       name: nifty-alert-state
-      mountPath: /opt/render/project/src/data
+      mountPath: /var/data
       sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: DATA_DIR
+        value: /var/data
       - key: DHAN_CLIENT_ID
         sync: false
       - key: DHAN_ACCESS_TOKEN
@@ -53,7 +59,11 @@ services:
         value: IDX_I
       - key: INSTRUMENT
         value: INDEX
-      - key: LIVE_MODE
-        value: Intraday
       - key: POLL_SECONDS
+        value: "60"
+      - key: LIVE_STOP_POINTS
         value: "30"
+      - key: LIVE_TARGET_POINTS
+        value: "60"
+      - key: LIVE_SLIPPAGE_POINTS
+        value: "1"
