@@ -71,3 +71,7 @@ The `Setup research` tab runs ten separate directional streams:
 - Previous-day high/low breaks
 
 Each stream is independently backtested in Intraday and/or Positional mode. Overlapping combined signal labels are not added together. The app exports a summary CSV and the detailed trades for a selected setup. Start with Bullish CHoCH Intraday as the first hypothesis, but do not treat the earlier small sample as proof of an edge.
+
+
+## V4.1 performance update
+The Setup Research tab now runs exactly one selected directional setup per click, rather than ten backtests sequentially. Confirmed price-action events are cached by Streamlit for reuse across setup selections. Select Bullish CHoCH first, run Intraday, then change the setup/mode and run again. This reduces the work per request and avoids the previous all-setups-at-once wait.

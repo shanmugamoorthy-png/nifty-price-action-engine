@@ -14,7 +14,7 @@ load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
 st.set_page_config(page_title="NIFTY Pure Price Action V3", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V3")
+st.title("NIFTY Pure Price Action Engine — V4.1")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -147,63 +147,94 @@ with tabs[2]:
         st.info("Download the five-year dataset first or upload an OHLC CSV.")
 
 
+
 with tabs[3]:
-    st.subheader("Setup-isolation research")
-    st.write("Each setup and direction is tested independently. One trade can belong to only one tested setup stream.")
+    st.subheader("Setup-isolation research — V4.1")
+    st.write("Run ONE setup at a time. This avoids running ten full backtests in one request.")
     research_data = load_saved()
     if research_data is not None and not research_data.empty:
+        from price_action import add_price_action_signals
+        from backtest import run_backtest
+        from research import SETUPS
+        # Prepare cached signals once per dataset. Streamlit hashes the uploaded/saved frame.
+        @st.cache_data(show_spinner="Calculating confirmed price-action events once...")
+        def cached_research_signals(frame):
+            return add_price_action_signals(frame)
+
         rc1, rc2 = st.columns(2)
         with rc1:
             research_start = st.date_input(
                 "Research start date",
                 value=max(research_data.index.min().date(), research_data.index.max().date()-timedelta(days=365)),
-                key="research_start"
+                key="research_start_v41"
             )
         with rc2:
             research_end = st.date_input(
-                "Research end date", value=research_data.index.max().date(), key="research_end"
+                "Research end date", value=research_data.index.max().date(), key="research_end_v41"
             )
-        research_mode = st.selectbox("Portfolio mode", ["Intraday", "Positional", "Both"], index=0)
-        st.caption("Recommended first test: Bullish CHoCH, Intraday, then compare the other isolated setups.")
-        if st.button("Run setup-isolation research", type="primary"):
+
+        setup_labels = [label for label, col in SETUPS]
+        selected_setup = st.selectbox(
+            "Select ONE setup",
+            setup_labels,
+            index=setup_labels.index("Bullish CHoCH"),
+            key="selected_setup_v41"
+        )
+        selected_column = dict(SETUPS)[selected_setup]
+        research_mode = st.selectbox(
+            "Portfolio mode", ["Intraday", "Positional"], index=0, key="research_mode_v41"
+        )
+        st.caption("Recommended first test: Bullish CHoCH • Intraday. Then select another setup and run it separately.")
+        if st.button("Run selected setup only", type="primary", key="run_selected_setup_v41"):
             if research_start > research_end:
                 st.error("Research start must be on or before research end.")
             else:
-                modes = ("Intraday", "Positional") if research_mode == "Both" else (research_mode,)
-                common = dict(
-                    stop_points=stop_points,
-                    target_points=target_points,
-                    brokerage_per_round_trip_inr=brokerage_inr,
-                    slippage_points_per_side=slippage,
-                    start_date=research_start,
-                    end_date=research_end,
-                )
-                with st.spinner("Testing each setup independently. Five-year tests can take a little time..."):
-                    summary, detail = run_setup_isolation(research_data, modes=modes, **common)
-                st.session_state["research_summary"] = summary
-                st.session_state["research_details"] = detail
-                st.success("Setup-isolation tests completed.")
-        if "research_summary" in st.session_state:
-            summary = st.session_state["research_summary"]
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Download setup comparison CSV",
-                summary.to_csv(index=False).encode("utf-8"),
-                "nifty_setup_isolation_summary.csv",
-                "text/csv",
-            )
-            selected = st.selectbox("Download detailed trades for setup", list(st.session_state["research_details"].keys()))
-            trades = st.session_state["research_details"][selected]
-            st.write(f"{selected}: {len(trades)} trades")
+                try:
+                    with st.spinner("Preparing cached price-action signals..."):
+                        signals = cached_research_signals(research_data)
+                    progress = st.progress(0, text="Starting selected setup backtest...")
+                    common = dict(
+                        stop_points=stop_points,
+                        target_points=target_points,
+                        brokerage_per_round_trip_inr=brokerage_inr,
+                        slippage_points_per_side=slippage,
+                        start_date=research_start,
+                        end_date=research_end,
+                        signal_filter=selected_column,
+                        signals_precomputed=True,
+                    )
+                    # One selected setup only; the backtest loop is executed once.
+                    result = run_backtest(signals, mode=research_mode, **common)
+                    progress.progress(100, text="Selected setup backtest completed.")
+                    _, trades, metrics = result
+                    st.session_state["v41_research_result"] = {
+                        "setup": selected_setup, "mode": research_mode,
+                        "trades": trades, "metrics": metrics
+                    }
+                except Exception as exc:
+                    st.error(f"Research failed: {exc}")
+
+        if "v41_research_result" in st.session_state:
+            result = st.session_state["v41_research_result"]
+            st.subheader(f'{result["setup"]} — {result["mode"]}')
+            metrics = result["metrics"]
+            metric_cols = st.columns(4)
+            for col, key in zip(metric_cols, list(metrics.keys())[:4]):
+                col.metric(key, metrics[key])
+            metric_cols2 = st.columns(4)
+            for col, key in zip(metric_cols2, list(metrics.keys())[4:8]):
+                col.metric(key, metrics[key])
+            trades = result["trades"]
+            st.write(f"Completed trades: {len(trades)}")
             if not trades.empty:
                 st.dataframe(trades, use_container_width=True)
             st.download_button(
-                "Download selected setup trades",
+                "Download selected setup trades CSV",
                 trades.to_csv(index=False).encode("utf-8"),
-                "nifty_selected_setup_trades.csv",
+                f"{result['setup'].lower().replace(' ','_')}_{result['mode'].lower()}_trades.csv",
                 "text/csv",
             )
-            st.info("Net points include simulated slippage. Brokerage is displayed separately in ₹ and is not subtracted from index points. These are historical simulations, not live performance.")
+            st.info("Only the selected setup was tested. Net points include simulated slippage. Brokerage is reported separately in ₹. This is a historical simulation, not live performance.")
     else:
         st.info("Download the historical 5-minute dataset first. Setup research runs on the saved OHLC candle data.")
 
