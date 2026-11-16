@@ -1,4 +1,4 @@
-# NIFTY Pure Price Action Engine V3
+# NIFTY Pure Price Action Engine V4.5
 
 ## What changed in V3
 - Advanced price action: confirmed swing pivots, BOS, CHoCH, liquidity sweeps, opening-range breaks, previous-day high/low breaks.
@@ -109,3 +109,12 @@ The Setup Research tab now exposes three independent bullish CHoCH + Higher Low 
 3. **V4.4 Variant 2 — Strong Breakout Candle:** baseline breakout must be bullish, real body at least 50% of candle range, and close in the upper 25% of the candle range.
 
 Run each setup separately with identical dates, stop, target, slippage, and brokerage. Compare Intraday and Positional independently. These are research variants, not proof of profitability.
+
+
+## V4.5 — Breakout strength experiment and retest repair
+
+V4.5 preserves the V4.4 50% Strong Breakout Candle stream as the benchmark and adds three separately selectable threshold streams: 40%, 50%, and 60% real-body/range. All require a bullish breakout candle and a close in the upper 25% of its full range. The 50% V4.5 stream is deliberately identical to the preserved V4.4 benchmark column.
+
+The V4.4 retest zero-trade defect was caused by reading the breakout level from the breakout bar, although that level was only stored on the earlier higher-low confirmation bar. V4.5 now retains that confirmed pullback-candle high across the subsequent breakout and retest stages. A retest must occur on a later candle, touch or trade below the stored breakout level, and close back at/above it. The setup is cancelled if price reaches the pre-CHoCH baseline or if no retest occurs within 48 bars. This bounds stale setups; it does not guarantee that the dataset will produce retest signals.
+
+Setup Research now displays the count of confirmed setup signals in the selected date range in addition to completed trade count, helping distinguish a zero-signal condition from trades not completed by the backtester. Run the V4.4 50% benchmark and V4.5 40%/50%/60% streams separately with identical dates and costs. Do not infer profitability until the full historical tests and an out-of-sample period are reviewed.

@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.4", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.4")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.5", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.5")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -72,8 +72,8 @@ with tabs[0]:
     - Opening range breakout: first three 5-minute candles, actionable after 09:30 IST.
     - Previous trading-day high/low breaks.
     - V4.3 baseline: bullish CHoCH, then a later confirmed higher low, then a candle close above the pivot-low candle high. Entry is next candle open.
-    - V4.4 Variant 1: after the breakout, wait for a later retest that touches the broken level and closes back at/above it. Entry is next candle open.
-    - V4.4 Variant 2: accept the breakout only when the candle is bullish, body/range is at least 50%, and close is in the upper 25% of its range. Entry is next candle open.
+    - V4.5 retest: after breakout, retain the correct breakout level, then wait up to 48 bars for a later touch and close back at/above it; cancel on structure failure or expiry. Entry is next candle open.
+    - V4.4 benchmark / V4.5 threshold tests: bullish breakout candle with body/range at least 40%, 50%, or 60%, and close in the upper 25% of its range. Entry is next candle open.
     - Combined entry = any non-conflicting event above. No indicators, OI or volume filters.
     """)
     st.info("OI and volume are excluded from signal generation. NIFTY Spot is an index, not a tradable contract; results are index points.")
@@ -152,8 +152,8 @@ with tabs[2]:
 
 
 with tabs[3]:
-    st.subheader("Setup-isolation research — V4.4")
-    st.write("Compare the V4.3 baseline with two independent V4.4 entry confirmations. Run one setup at a time; intraday and positional portfolios are independent.")
+    st.subheader("Setup-isolation research — V4.5")
+    st.write("Compare the preserved V4.4 benchmark, V4.5 40%/50%/60% breakout thresholds, and the repaired retest setup. Run one setup at a time; intraday and positional portfolios are independent.")
     research_data = load_saved()
     if research_data is not None and not research_data.empty:
         from price_action import add_price_action_signals
@@ -169,11 +169,11 @@ with tabs[3]:
             research_start = st.date_input(
                 "Research start date",
                 value=research_data.index.min().date(),
-                key="research_start_v44"
+                key="research_start_v45"
             )
         with rc2:
             research_end = st.date_input(
-                "Research end date", value=research_data.index.max().date(), key="research_end_v44"
+                "Research end date", value=research_data.index.max().date(), key="research_end_v45"
             )
 
         setup_labels = [label for label, col in SETUPS]
@@ -181,14 +181,14 @@ with tabs[3]:
             "Select ONE setup",
             setup_labels,
             index=setup_labels.index("V4.3 Baseline — Pullback-High Breakout"),
-            key="selected_setup_v44"
+            key="selected_setup_v45"
         )
         selected_column = dict(SETUPS)[selected_setup]
         research_mode = st.selectbox(
-            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v44"
+            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v45"
         )
         st.caption("Five-year default: earliest saved candle through latest saved candle. Both mode runs two independent portfolios, not a combined position.")
-        if st.button("Run selected setup", type="primary", key="run_selected_setup_v44"):
+        if st.button("Run selected setup", type="primary", key="run_selected_setup_v45"):
             if research_start > research_end:
                 st.error("Research start must be on or before research end.")
             else:
@@ -212,20 +212,25 @@ with tabs[3]:
                         results[mode_name] = run_backtest(signals, mode=mode_name, **common)
                         progress.progress(int(idx / len(selected_modes) * 100),
                                           text=f"Completed {mode_name} portfolio ({idx}/{len(selected_modes)})")
-                    st.session_state["v44_research_results"] = {
-                        "setup": selected_setup, "results": results,
+                    st.session_state["v45_research_results"] = {
+                        "setup": selected_setup, "column": selected_column, "results": results,
                         "start": research_start, "end": research_end
                     }
                 except Exception as exc:
                     st.error(f"Research failed: {exc}")
 
 
-        if "v44_research_results" in st.session_state:
-            saved_result = st.session_state["v44_research_results"]
+        if "v45_research_results" in st.session_state:
+            saved_result = st.session_state["v45_research_results"]
             st.subheader(f'{saved_result["setup"]} — {saved_result["start"]} to {saved_result["end"]}')
             for mode_name, result_tuple in saved_result["results"].items():
-                _, trades, metrics = result_tuple
+                signal_frame, trades, metrics = result_tuple
                 st.markdown(f"#### {mode_name} portfolio")
+                detected = int(signal_frame.loc[
+                    (signal_frame.index.date >= saved_result["start"]) &
+                    (signal_frame.index.date <= saved_result["end"]), selected_column
+                ].fillna(False).astype(bool).sum()) if saved_result["column"] in signal_frame.columns else 0
+                st.caption(f"Confirmed setup signals in selected date range: {detected:,} | Completed trades: {len(trades):,}")
                 metric_cols = st.columns(4)
                 for col, key in zip(metric_cols, list(metrics.keys())[:4]):
                     col.metric(key, metrics[key])
@@ -240,9 +245,9 @@ with tabs[3]:
                     trades.to_csv(index=False).encode("utf-8"),
                     f"choch_hl_{mode_name.lower()}_trades.csv",
                     "text/csv",
-                    key=f"download_{mode_name.lower()}_v44"
+                    key=f"download_{mode_name.lower()}_v45"
                 )
-            st.info("V4.3 baseline: close above the pivot-low candle high. V4.4 retest: later touch and close back at/above the breakout level. V4.4 strong candle: bullish breakout, body/range ≥50%, close in upper 25% of range. All signals are confirmed at candle close and enter next candle open. Costs and NIFTY index-point reporting are unchanged.")
+            st.info("V4.3 baseline: close above pivot-low candle high. V4.5 retest fix: retains the breakout level from the confirmed higher-low event, then requires a later retest and close back at/above that level within 48 bars. V4.5 benchmark remains 50%; V4.5 compares 40%, 50%, and 60% bullish candle body/range thresholds, each requiring close in upper 25% of range. All signals are confirmed at candle close and enter next candle open. Costs and NIFTY index-point reporting are unchanged.")
     else:
         st.info("Download the historical 5-minute dataset first. Setup research runs on the saved OHLC candle data.")
 
@@ -250,6 +255,6 @@ with tabs[4]:
     st.subheader("Telegram test")
     st.write("Continuous BUY/SELL monitoring runs in the separate Render background worker.")
     if st.button("Send Telegram test message"):
-        ok, info = send_telegram("NIFTY Pure Price Action V4.4: Telegram test successful.")
+        ok, info = send_telegram("NIFTY Pure Price Action V4.5: Telegram test successful.")
         st.success(info) if ok else st.error(info)
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")

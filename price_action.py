@@ -165,46 +165,59 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["choch_hl_pullback_high"] = choch_hl_pullback_high
     x["choch_hl_breakout_up"] = choch_hl_breakout_up
 
-    # V4.4 independent entry variants. All signals are emitted on the candle
-    # close that completes the condition; the backtester enters next candle open.
-    # Variant A: V4.3 baseline breakout (unchanged).
-    # Variant B: breakout first, then a later retest of the broken level that
-    # touches it and closes back at/above it.
+    # V4.5 independent entry variants. Signals are emitted at candle close;
+    # the backtester enters at the next candle open.
+    # Retest fix: preserve the pivot-pullback breakout level from the HL event.
     retest_signal = np.zeros(n, dtype=bool)
     retest_waiting = False
     retest_level = np.nan
     retest_baseline = np.nan
+    active_hl_level = np.nan
     active_hl_baseline = np.nan
+    retest_age = 0
+    retest_max_wait_bars = 48  # two trading sessions on 5-minute bars; bounded stale setup
+
     for i in range(n):
         if choch_hl_up[i]:
+            active_hl_level = choch_hl_pullback_high[i]
             active_hl_baseline = choch_hl_reference[i]
         if choch_hl_breakout_up[i]:
-            retest_waiting = True
-            retest_level = choch_hl_pullback_high[i]
+            retest_waiting = np.isfinite(active_hl_level)
+            retest_level = active_hl_level
             retest_baseline = active_hl_baseline
+            retest_age = 0
             continue
         if retest_waiting:
-            if np.isfinite(retest_baseline) and low[i] <= retest_baseline:
+            retest_age += 1
+            # Cancel if structure fails or the retest window expires.
+            if (np.isfinite(retest_baseline) and low[i] <= retest_baseline) or retest_age > retest_max_wait_bars:
                 retest_waiting = False
                 continue
+            # Require a later candle to trade to/through the breakout level,
+            # then close back at/above it. A breakout candle cannot retest itself.
             if np.isfinite(retest_level) and low[i] <= retest_level and close[i] >= retest_level:
                 retest_signal[i] = True
                 retest_waiting = False
     x["choch_hl_breakout_retest_up"] = retest_signal
 
-    # Variant C: accept the V4.3 breakout only if its candle has both a
-    # meaningful real body and a close in the upper part of its full range.
+    # Three independent breakout candle strength thresholds. The 50% stream
+    # preserves the V4.4 benchmark rule exactly; body ratio is absolute body/range,
+    # and the candle must be bullish with close in the upper 25% of its range.
     candle_range = (x["high"] - x["low"]).replace(0, np.nan)
     body_ratio = (x["close"] - x["open"]).abs() / candle_range
     close_location = (x["close"] - x["low"]) / candle_range
     x["breakout_body_ratio"] = body_ratio.fillna(0.0)
     x["breakout_close_location"] = close_location.fillna(0.0)
-    x["choch_hl_strong_breakout_up"] = (
-        x["choch_hl_breakout_up"] &
-        (x["close"] > x["open"]) &
-        (x["breakout_body_ratio"] >= 0.50) &
-        (x["breakout_close_location"] >= 0.75)
-    )
+    for threshold in (40, 50, 60):
+        col = f"choch_hl_strong_breakout_{threshold}_up"
+        x[col] = (
+            x["choch_hl_breakout_up"] &
+            (x["close"] > x["open"]) &
+            (x["breakout_body_ratio"] >= threshold / 100.0) &
+            (x["breakout_close_location"] >= 0.75)
+        )
+    # Backward-compatible V4.4 benchmark column (unchanged 50% rule).
+    x["choch_hl_strong_breakout_up"] = x["choch_hl_strong_breakout_50_up"]
 
     prev_close = x["close"].shift(1)
     after_orb = x.index.time >= pd.Timestamp("09:30").time()
