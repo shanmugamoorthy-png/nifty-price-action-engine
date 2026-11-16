@@ -220,7 +220,7 @@ with tabs[3]:
                     st.error(f"Research failed: {exc}")
 
 
-        if "v43_research_results" in st.session_state:
+        if "v44_research_results" in st.session_state:
             saved_result = st.session_state["v44_research_results"]
             st.subheader(f'{saved_result["setup"]} — {saved_result["start"]} to {saved_result["end"]}')
             for mode_name, result_tuple in saved_result["results"].items():
