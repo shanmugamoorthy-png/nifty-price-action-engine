@@ -10,7 +10,7 @@ def _adverse_fill(raw_price, side, is_entry, slippage):
 def run_backtest(df, mode="Intraday", stop_points=30.0, target_points=60.0,
                  brokerage_per_round_trip_inr=20.0, slippage_points_per_side=1.0,
                  square_off_time="15:20", start_date=None, end_date=None,
-                 exit_on_opposite_signal=True):
+                 exit_on_opposite_signal=True, signal_filter=None, signals_precomputed=False):
     """
     One-position backtest. Signals are known at candle close and filled at next
     candle open. Intraday and positional are separate modes. Brokerage is
@@ -23,7 +23,15 @@ def run_backtest(df, mode="Intraday", stop_points=30.0, target_points=60.0,
     if slippage_points_per_side < 0 or brokerage_per_round_trip_inr < 0:
         raise ValueError("Costs cannot be negative.")
 
-    x = add_price_action_signals(df).copy()
+    x = df.copy() if signals_precomputed else add_price_action_signals(df).copy()
+    if signal_filter:
+        if signal_filter not in x.columns:
+            raise ValueError(f"Unknown setup filter: {signal_filter}")
+        active = x[signal_filter].fillna(False).astype(bool)
+        x["signal"] = 0
+        x.loc[active, "signal"] = 1 if signal_filter.endswith("_up") else -1
+        x["signal_reason"] = ""
+        x.loc[active, "signal_reason"] = signal_filter
     trades = []
     position = None
     start = pd.Timestamp(start_date).date() if start_date else None

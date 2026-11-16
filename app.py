@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from config import SECURITY_ID, EXCHANGE_SEGMENT, INSTRUMENT, DATA_DIR
 from dhan_api import DhanClient, DhanAPIError
 from backtest import run_backtest, run_both_modes
+from research import run_setup_isolation
 from telegram_alert import send_telegram
 
 load_dotenv()
@@ -61,7 +62,7 @@ def render_results(label, result):
     else:
         st.info("No trades in the selected period.")
 
-tabs = st.tabs(["Dashboard", "Historical download", "Backtest", "Telegram"])
+tabs = st.tabs(["Dashboard", "Historical download", "Backtest", "Setup research", "Telegram"])
 with tabs[0]:
     st.subheader("Signal design")
     st.markdown("""
@@ -145,7 +146,68 @@ with tabs[2]:
     else:
         st.info("Download the five-year dataset first or upload an OHLC CSV.")
 
+
 with tabs[3]:
+    st.subheader("Setup-isolation research")
+    st.write("Each setup and direction is tested independently. One trade can belong to only one tested setup stream.")
+    research_data = load_saved()
+    if research_data is not None and not research_data.empty:
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            research_start = st.date_input(
+                "Research start date",
+                value=max(research_data.index.min().date(), research_data.index.max().date()-timedelta(days=365)),
+                key="research_start"
+            )
+        with rc2:
+            research_end = st.date_input(
+                "Research end date", value=research_data.index.max().date(), key="research_end"
+            )
+        research_mode = st.selectbox("Portfolio mode", ["Intraday", "Positional", "Both"], index=0)
+        st.caption("Recommended first test: Bullish CHoCH, Intraday, then compare the other isolated setups.")
+        if st.button("Run setup-isolation research", type="primary"):
+            if research_start > research_end:
+                st.error("Research start must be on or before research end.")
+            else:
+                modes = ("Intraday", "Positional") if research_mode == "Both" else (research_mode,)
+                common = dict(
+                    stop_points=stop_points,
+                    target_points=target_points,
+                    brokerage_per_round_trip_inr=brokerage_inr,
+                    slippage_points_per_side=slippage,
+                    start_date=research_start,
+                    end_date=research_end,
+                )
+                with st.spinner("Testing each setup independently. Five-year tests can take a little time..."):
+                    summary, detail = run_setup_isolation(research_data, modes=modes, **common)
+                st.session_state["research_summary"] = summary
+                st.session_state["research_details"] = detail
+                st.success("Setup-isolation tests completed.")
+        if "research_summary" in st.session_state:
+            summary = st.session_state["research_summary"]
+            st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download setup comparison CSV",
+                summary.to_csv(index=False).encode("utf-8"),
+                "nifty_setup_isolation_summary.csv",
+                "text/csv",
+            )
+            selected = st.selectbox("Download detailed trades for setup", list(st.session_state["research_details"].keys()))
+            trades = st.session_state["research_details"][selected]
+            st.write(f"{selected}: {len(trades)} trades")
+            if not trades.empty:
+                st.dataframe(trades, use_container_width=True)
+            st.download_button(
+                "Download selected setup trades",
+                trades.to_csv(index=False).encode("utf-8"),
+                "nifty_selected_setup_trades.csv",
+                "text/csv",
+            )
+            st.info("Net points include simulated slippage. Brokerage is displayed separately in ₹ and is not subtracted from index points. These are historical simulations, not live performance.")
+    else:
+        st.info("Download the historical 5-minute dataset first. Setup research runs on the saved OHLC candle data.")
+
+with tabs[4]:
     st.subheader("Telegram test")
     st.write("Continuous BUY/SELL monitoring runs in the separate Render background worker.")
     if st.button("Send Telegram test message"):

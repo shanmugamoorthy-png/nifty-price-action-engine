@@ -60,3 +60,14 @@ The worker polls recent 5-minute historical candles every `POLL_SECONDS` (defaul
 - A gap through a stop is filled at the candle open.
 - One open position per independent portfolio.
 - Backtest is educational research, not a promise of future performance.
+
+
+## V4 setup-isolation research
+The `Setup research` tab runs ten separate directional streams:
+- Bullish/bearish CHoCH
+- Bullish/bearish BOS
+- Bullish/bearish liquidity sweeps
+- Bullish/bearish opening-range breaks
+- Previous-day high/low breaks
+
+Each stream is independently backtested in Intraday and/or Positional mode. Overlapping combined signal labels are not added together. The app exports a summary CSV and the detailed trades for a selected setup. Start with Bullish CHoCH Intraday as the first hypothesis, but do not treat the earlier small sample as proof of an edge.
