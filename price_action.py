@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 def _confirmed_pivots(high, low, left=3, right=3):
+    """Return pivot values on the bar where the right-side confirmation completes."""
     n = len(high)
     new_high = np.full(n, np.nan)
     new_low = np.full(n, np.nan)
@@ -20,9 +21,14 @@ def _confirmed_pivots(high, low, left=3, right=3):
 
 def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     """
-    Causal price-action engine. A pivot is exposed only after pivot_right bars close.
-    Signal set: BOS, CHoCH, opening-range break, previous-day break, liquidity sweep.
-    No indicators, OI, volume, moving averages or extra breakout-distance filter.
+    Causal pure-price-action engine.
+    A swing is usable only on its confirmation bar (after pivot_right bars).
+    CHoCH + Higher Low:
+      1) A bullish CHoCH breaks the latest confirmed swing high while prior trend is bearish.
+      2) After that CHoCH, a new confirmed swing low must be strictly above the
+         prior confirmed swing low.
+      3) The setup signal is emitted only when the higher low is confirmed.
+    Thus the strategy does not enter retrospectively at the pivot candle.
     """
     x = df.copy().sort_index()
     x.columns = [str(c).lower().strip() for c in x.columns]
@@ -39,14 +45,10 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["prev_day_high"] = x["session_date"].map(daily["prev_day_high"])
     x["prev_day_low"] = x["session_date"].map(daily["prev_day_low"])
 
-    # Opening range is first `orb_bars` 5-minute bars from 09:15. Levels are
-    # only actionable from 09:30 onward, so no intraday look-ahead is used.
     x["orb_high"] = np.nan
     x["orb_low"] = np.nan
     for day, idx in x.groupby("session_date").groups.items():
         day_frame = x.loc[idx]
-        opening = day_frame.between_time("09:15", "09:15", inclusive="both")
-        # Select the first N rows of the session rather than relying on exact bar count.
         opening = day_frame.iloc[:orb_bars]
         if len(opening):
             x.loc[idx, "orb_high"] = float(opening["high"].max())
@@ -55,6 +57,7 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     high = x["high"].to_numpy(dtype=float)
     low = x["low"].to_numpy(dtype=float)
     close = x["close"].to_numpy(dtype=float)
+    open_ = x["open"].to_numpy(dtype=float)
     n = len(x)
     pivot_h, pivot_l = _confirmed_pivots(high, low, pivot_left, pivot_right)
     x["new_swing_high"] = pivot_h
@@ -68,14 +71,27 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     trend_labels, bos_up, bos_down, choch_up, choch_down = [], [], [], [], []
     sweep_up, sweep_down = [], []
     active_high, active_low = [], []
+
+    # CHoCH->HL state. The baseline is the latest confirmed swing low that existed
+    # at the CHoCH event. A lower/equal subsequent pivot invalidates this attempt.
+    waiting_for_hl = False
+    choch_reference_low = np.nan
+    choch_hl_up = np.zeros(n, dtype=bool)
+    choch_hl_reference = np.full(n, np.nan)
+    choch_hl_confirmed_low = np.full(n, np.nan)
+
     for i in range(n):
+        prior_confirmed_low = last_low
+
         if np.isfinite(pivot_h[i]):
             previous_high, last_high = last_high, pivot_h[i]
         if np.isfinite(pivot_l[i]):
             previous_low, last_low = last_low, pivot_l[i]
+
         active_high.append(last_high)
         active_low.append(last_low)
         bu = bd = cu = cd = su = sd = False
+
         if i > 0:
             prior_close = close[i-1]
             if np.isfinite(last_high) and prior_close <= last_high < close[i]:
@@ -90,11 +106,29 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
                 else:
                     bd = True
                 trend = -1
-            # Liquidity sweep: pierce a confirmed swing and close back inside.
-            if np.isfinite(last_high) and high[i] > last_high and close[i] < last_high and close[i] < x["open"].iloc[i]:
+
+            if np.isfinite(last_high) and high[i] > last_high and close[i] < last_high and close[i] < open_[i]:
                 sd = True
-            if np.isfinite(last_low) and low[i] < last_low and close[i] > last_low and close[i] > x["open"].iloc[i]:
+            if np.isfinite(last_low) and low[i] < last_low and close[i] > last_low and close[i] > open_[i]:
                 su = True
+
+        # Start a new HL sequence only on a confirmed bullish CHoCH.
+        if cu:
+            waiting_for_hl = np.isfinite(prior_confirmed_low)
+            choch_reference_low = prior_confirmed_low if waiting_for_hl else np.nan
+
+        # Only pivots confirmed AFTER the CHoCH can validate the higher low.
+        # A pivot confirmed on the same bar as CHoCH is not used.
+        if waiting_for_hl and i > 0 and np.isfinite(pivot_l[i]) and not cu:
+            if pivot_l[i] > choch_reference_low:
+                choch_hl_up[i] = True
+                choch_hl_reference[i] = choch_reference_low
+                choch_hl_confirmed_low[i] = pivot_l[i]
+                waiting_for_hl = False
+            else:
+                # A lower/equal low invalidates this CHoCH attempt.
+                waiting_for_hl = False
+
         trend_labels.append(trend)
         bos_up.append(bu); bos_down.append(bd)
         choch_up.append(cu); choch_down.append(cd)
@@ -106,6 +140,9 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["bos_up"], x["bos_down"] = bos_up, bos_down
     x["choch_up"], x["choch_down"] = choch_up, choch_down
     x["liquidity_sweep_up"], x["liquidity_sweep_down"] = sweep_up, sweep_down
+    x["choch_hl_up"] = choch_hl_up
+    x["choch_hl_reference_low"] = choch_hl_reference
+    x["choch_hl_confirmed_low"] = choch_hl_confirmed_low
 
     prev_close = x["close"].shift(1)
     after_orb = x.index.time >= pd.Timestamp("09:30").time()
@@ -127,4 +164,5 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
         x.loc[active, "signal_reason"] = x.loc[active, "signal_reason"].astype(str).apply(
             lambda s: (s + ", " if s else "") + col
         )
+    x.loc[x["choch_hl_up"], "signal_reason"] = "choch_hl_up"
     return x

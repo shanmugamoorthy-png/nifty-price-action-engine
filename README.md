@@ -75,3 +75,14 @@ Each stream is independently backtested in Intraday and/or Positional mode. Over
 
 ## V4.1 performance update
 The Setup Research tab now runs exactly one selected directional setup per click, rather than ten backtests sequentially. Confirmed price-action events are cached by Streamlit for reuse across setup selections. Select Bullish CHoCH first, run Intraday, then change the setup/mode and run again. This reduces the work per request and avoids the previous all-setups-at-once wait.
+
+
+## V4.2 — CHoCH + Higher Low confirmation
+The primary research hypothesis is a bullish CHoCH followed by a later confirmed higher low:
+1. A bullish CHoCH is registered only when a candle closes above the latest confirmed swing high while the previous structure trend is bearish.
+2. The baseline is the latest confirmed swing low available at that CHoCH.
+3. A later swing low must be confirmed using the configured right-side pivot bars and must be strictly higher than the baseline.
+4. The strategy signal is timestamped on the pivot confirmation bar, not the historical pivot bar. Backtest entry is at the next candle open.
+5. A lower/equal confirmed low invalidates that CHoCH attempt.
+
+The Setup Research tab defaults to the full saved candle date range. Select `Both (separate)` to run independent Intraday and Positional portfolios and inspect/download their results separately. Costs: slippage is applied adversely to entry and exit fills in index points; estimated brokerage is reported in INR separately, never subtracted from index points. NIFTY Spot remains a non-tradable index reference, so results are index points rather than rupee P&L.

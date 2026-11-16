@@ -2,12 +2,10 @@ import pandas as pd
 from price_action import add_price_action_signals
 from backtest import run_backtest
 
-# Each setup is tested as a standalone, mutually exclusive signal stream.
-# Long and short variants are separate portfolios to prevent overlapping labels
-# from being counted as independent trades.
 SETUPS = [
-    ("Bullish CHoCH", "choch_up"),
-    ("Bearish CHoCH", "choch_down"),
+    ("Bullish CHoCH + Higher Low", "choch_hl_up"),
+    ("Bullish CHoCH (baseline)", "choch_up"),
+    ("Bearish CHoCH (comparison)", "choch_down"),
     ("Bullish BOS", "bos_up"),
     ("Bearish BOS", "bos_down"),
     ("Bullish liquidity sweep", "liquidity_sweep_up"),
@@ -19,29 +17,18 @@ SETUPS = [
 ]
 
 def run_setup_isolation(df, modes=("Intraday", "Positional"), **kwargs):
-    """
-    Run each price-action event as an isolated strategy.
-    Returns a summary DataFrame and a dict of detailed trade DataFrames.
-    Signals are generated once, then filtered to one event/direction at a time.
-    """
     signals = add_price_action_signals(df)
-    summaries = []
-    details = {}
+    summaries, details = [], {}
     for label, column in SETUPS:
         for mode in modes:
             _, trades, metrics = run_backtest(
-                signals,
-                mode=mode,
-                signal_filter=column,
-                signals_precomputed=True,
-                **kwargs,
+                signals, mode=mode, signal_filter=column,
+                signals_precomputed=True, **kwargs
             )
             key = f"{mode} | {label}"
             details[key] = trades
             summaries.append({
-                "Mode": mode,
-                "Setup": label,
-                "Signal column": column,
+                "Mode": mode, "Setup": label, "Signal column": column,
                 "Trades": metrics.get("Trades", 0),
                 "Win rate %": metrics.get("Win rate %", 0.0),
                 "Gross points": metrics.get("Gross points", 0.0),
@@ -51,12 +38,11 @@ def run_setup_isolation(df, modes=("Intraday", "Positional"), **kwargs):
                 "Average net points/trade": metrics.get("Average net points/trade", 0.0),
                 "Brokerage estimate ₹": metrics.get("Brokerage estimate ₹", 0.0),
             })
-    summary = pd.DataFrame(summaries)
-    return summary, details
+    return pd.DataFrame(summaries), details
 
-def setup_signal_counts(df):
-    signals = add_price_action_signals(df)
-    rows = []
-    for label, column in SETUPS:
-        rows.append({"Setup": label, "Signal candles": int(signals[column].fillna(False).sum())})
-    return pd.DataFrame(rows)
+def run_one_setup(signals, setup_column, mode, **kwargs):
+    """Run one precomputed setup stream, keeping intraday/positional separate."""
+    return run_backtest(
+        signals, mode=mode, signal_filter=setup_column,
+        signals_precomputed=True, **kwargs
+    )
