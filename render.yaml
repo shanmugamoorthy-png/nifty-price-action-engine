@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: nifty-pure-price-action
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    disk:
+      name: nifty-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars: &common_env
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DHAN_CLIENT_ID
+        sync: false
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: SECURITY_ID
+        value: "13"
+      - key: EXCHANGE_SEGMENT
+        value: IDX_I
+      - key: INSTRUMENT
+        value: INDEX
+  - type: worker
+    name: nifty-price-action-alert-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python monitor_worker.py
+    disk:
+      name: nifty-alert-state
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DHAN_CLIENT_ID
+        sync: false
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: SECURITY_ID
+        value: "13"
+      - key: EXCHANGE_SEGMENT
+        value: IDX_I
+      - key: INSTRUMENT
+        value: INDEX
+      - key: LIVE_MODE
+        value: Intraday
+      - key: POLL_SECONDS
+        value: "30"
