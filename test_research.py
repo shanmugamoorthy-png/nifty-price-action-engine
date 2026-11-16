@@ -5,8 +5,8 @@ from research import SETUPS, run_setup_isolation
 class ResearchTests(unittest.TestCase):
     def test_setup_list_has_directional_separate_streams(self):
         cols = [column for _, column in SETUPS]
-        self.assertEqual(len(cols), 12)
-        self.assertEqual(len(set(cols)), 12)
+        self.assertEqual(len(cols), 14)
+        self.assertEqual(len(set(cols)), 14)
         self.assertIn("choch_up", cols)
         self.assertIn("bos_down", cols)
 
@@ -21,8 +21,8 @@ class ResearchTests(unittest.TestCase):
             frame, modes=("Intraday",), stop_points=3, target_points=5,
             brokerage_per_round_trip_inr=20, slippage_points_per_side=0
         )
-        self.assertEqual(len(summary), 12)
-        self.assertEqual(len(details), 12)
+        self.assertEqual(len(summary), 14)
+        self.assertEqual(len(details), 14)
         self.assertTrue((summary["Brokerage estimate ₹"] >= 0).all())
 
 if __name__ == "__main__":

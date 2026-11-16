@@ -165,6 +165,47 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["choch_hl_pullback_high"] = choch_hl_pullback_high
     x["choch_hl_breakout_up"] = choch_hl_breakout_up
 
+    # V4.4 independent entry variants. All signals are emitted on the candle
+    # close that completes the condition; the backtester enters next candle open.
+    # Variant A: V4.3 baseline breakout (unchanged).
+    # Variant B: breakout first, then a later retest of the broken level that
+    # touches it and closes back at/above it.
+    retest_signal = np.zeros(n, dtype=bool)
+    retest_waiting = False
+    retest_level = np.nan
+    retest_baseline = np.nan
+    active_hl_baseline = np.nan
+    for i in range(n):
+        if choch_hl_up[i]:
+            active_hl_baseline = choch_hl_reference[i]
+        if choch_hl_breakout_up[i]:
+            retest_waiting = True
+            retest_level = choch_hl_pullback_high[i]
+            retest_baseline = active_hl_baseline
+            continue
+        if retest_waiting:
+            if np.isfinite(retest_baseline) and low[i] <= retest_baseline:
+                retest_waiting = False
+                continue
+            if np.isfinite(retest_level) and low[i] <= retest_level and close[i] >= retest_level:
+                retest_signal[i] = True
+                retest_waiting = False
+    x["choch_hl_breakout_retest_up"] = retest_signal
+
+    # Variant C: accept the V4.3 breakout only if its candle has both a
+    # meaningful real body and a close in the upper part of its full range.
+    candle_range = (x["high"] - x["low"]).replace(0, np.nan)
+    body_ratio = (x["close"] - x["open"]).abs() / candle_range
+    close_location = (x["close"] - x["low"]) / candle_range
+    x["breakout_body_ratio"] = body_ratio.fillna(0.0)
+    x["breakout_close_location"] = close_location.fillna(0.0)
+    x["choch_hl_strong_breakout_up"] = (
+        x["choch_hl_breakout_up"] &
+        (x["close"] > x["open"]) &
+        (x["breakout_body_ratio"] >= 0.50) &
+        (x["breakout_close_location"] >= 0.75)
+    )
+
     prev_close = x["close"].shift(1)
     after_orb = x.index.time >= pd.Timestamp("09:30").time()
     x["orb_up"] = after_orb & (prev_close <= x["orb_high"]) & (x["close"] > x["orb_high"])

@@ -4,7 +4,9 @@ from backtest import run_backtest
 
 SETUPS = [
     ("Bullish CHoCH + Higher Low", "choch_hl_up"),
-    ("CHoCH + Higher Low + Pullback-High Breakout", "choch_hl_breakout_up"),
+    ("V4.3 Baseline — Pullback-High Breakout", "choch_hl_breakout_up"),
+    ("V4.4 Variant 1 — Breakout + Retest Hold", "choch_hl_breakout_retest_up"),
+    ("V4.4 Variant 2 — Strong Breakout Candle", "choch_hl_strong_breakout_up"),
     ("Bullish CHoCH (baseline)", "choch_up"),
     ("Bearish CHoCH (comparison)", "choch_down"),
     ("Bullish BOS", "bos_up"),
