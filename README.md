@@ -86,3 +86,15 @@ The primary research hypothesis is a bullish CHoCH followed by a later confirmed
 5. A lower/equal confirmed low invalidates that CHoCH attempt.
 
 The Setup Research tab defaults to the full saved candle date range. Select `Both (separate)` to run independent Intraday and Positional portfolios and inspect/download their results separately. Costs: slippage is applied adversely to entry and exit fills in index points; estimated brokerage is reported in INR separately, never subtracted from index points. NIFTY Spot remains a non-tradable index reference, so results are index points rather than rupee P&L.
+
+
+## V4.3 — CHoCH + Higher Low + Pullback-High Breakout
+The V4.3 research setup adds a third causal confirmation after the V4.2 sequence:
+1. Register bullish CHoCH and store the latest confirmed swing-low baseline.
+2. Wait for a later confirmed swing low strictly above that baseline.
+3. Identify the actual pivot-low candle (the pullback candle) and store its high.
+4. Only after the higher-low confirmation bar, require a later candle to CLOSE above that pullback candle high.
+5. Emit the entry signal on that breakout candle close; backtest entry is the next candle open.
+6. If price trades back to or below the pre-CHoCH baseline before breakout, cancel the pending setup.
+
+The V4.2 `choch_hl_up` event remains available as a separate comparison setup. The new `choch_hl_breakout_up` stream is the V4.3 default in Setup Research. This is a research hypothesis, not a claim of profitability.

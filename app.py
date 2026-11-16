@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V3", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.1")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.3", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.3")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -71,7 +71,7 @@ with tabs[0]:
     - Liquidity sweeps: wick through a confirmed swing followed by a close back inside.
     - Opening range breakout: first three 5-minute candles, actionable after 09:30 IST.
     - Previous trading-day high/low breaks.
-    - V4.2 CHoCH + Higher Low: bullish CHoCH first, then wait for a later confirmed swing low strictly above the pre-CHoCH confirmed swing low. Entry signal occurs only when the higher low is confirmed; execution is next candle open.
+    - V4.3 CHoCH + Higher Low + Pullback-High Breakout: bullish CHoCH, then a later confirmed higher low, then a candle close above the pivot-low candle high. Entry is next candle open.
     - Combined entry = any non-conflicting event above. No indicators, OI or volume filters.
     """)
     st.info("OI and volume are excluded from signal generation. NIFTY Spot is an index, not a tradable contract; results are index points.")
@@ -150,8 +150,8 @@ with tabs[2]:
 
 
 with tabs[3]:
-    st.subheader("Setup-isolation research — V4.2")
-    st.write("V4.2 tests bullish CHoCH + Higher Low. Run one setup at a time; intraday and positional portfolios are independent.")
+    st.subheader("Setup-isolation research — V4.3")
+    st.write("V4.3 tests CHoCH + Higher Low + pullback-high breakout. Run one setup at a time; intraday and positional portfolios are independent.")
     research_data = load_saved()
     if research_data is not None and not research_data.empty:
         from price_action import add_price_action_signals
@@ -167,26 +167,26 @@ with tabs[3]:
             research_start = st.date_input(
                 "Research start date",
                 value=research_data.index.min().date(),
-                key="research_start_v42"
+                key="research_start_v43"
             )
         with rc2:
             research_end = st.date_input(
-                "Research end date", value=research_data.index.max().date(), key="research_end_v42"
+                "Research end date", value=research_data.index.max().date(), key="research_end_v43"
             )
 
         setup_labels = [label for label, col in SETUPS]
         selected_setup = st.selectbox(
             "Select ONE setup",
             setup_labels,
-            index=setup_labels.index("Bullish CHoCH + Higher Low"),
-            key="selected_setup_v42"
+            index=setup_labels.index("CHoCH + Higher Low + Pullback-High Breakout"),
+            key="selected_setup_v43"
         )
         selected_column = dict(SETUPS)[selected_setup]
         research_mode = st.selectbox(
-            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v42"
+            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v43"
         )
         st.caption("Five-year default: earliest saved candle through latest saved candle. Both mode runs two independent portfolios, not a combined position.")
-        if st.button("Run selected setup", type="primary", key="run_selected_setup_v42"):
+        if st.button("Run selected setup", type="primary", key="run_selected_setup_v43"):
             if research_start > research_end:
                 st.error("Research start must be on or before research end.")
             else:
@@ -210,7 +210,7 @@ with tabs[3]:
                         results[mode_name] = run_backtest(signals, mode=mode_name, **common)
                         progress.progress(int(idx / len(selected_modes) * 100),
                                           text=f"Completed {mode_name} portfolio ({idx}/{len(selected_modes)})")
-                    st.session_state["v42_research_results"] = {
+                    st.session_state["v43_research_results"] = {
                         "setup": selected_setup, "results": results,
                         "start": research_start, "end": research_end
                     }
@@ -218,8 +218,8 @@ with tabs[3]:
                     st.error(f"Research failed: {exc}")
 
 
-        if "v42_research_results" in st.session_state:
-            saved_result = st.session_state["v42_research_results"]
+        if "v43_research_results" in st.session_state:
+            saved_result = st.session_state["v43_research_results"]
             st.subheader(f'{saved_result["setup"]} — {saved_result["start"]} to {saved_result["end"]}')
             for mode_name, result_tuple in saved_result["results"].items():
                 _, trades, metrics = result_tuple
@@ -238,9 +238,9 @@ with tabs[3]:
                     trades.to_csv(index=False).encode("utf-8"),
                     f"choch_hl_{mode_name.lower()}_trades.csv",
                     "text/csv",
-                    key=f"download_{mode_name.lower()}_v42"
+                    key=f"download_{mode_name.lower()}_v43"
                 )
-            st.info("CHoCH + HL is confirmed only after the later higher-low pivot completes its right-side confirmation bars. Entry is next candle open. Slippage is charged on entry and exit. Brokerage is separately reported in ₹; it is not deducted from index points. NIFTY Spot results are index points, not rupee P&L.")
+            st.info("V4.3 requires CHoCH, a later confirmed higher low, then a candle close above the pivot-low candle high. Entry is the next candle open. Slippage is charged on entry and exit. Brokerage is separately reported in ₹; it is not deducted from index points. NIFTY Spot results are index points, not rupee P&L.")
     else:
         st.info("Download the historical 5-minute dataset first. Setup research runs on the saved OHLC candle data.")
 
@@ -248,6 +248,6 @@ with tabs[4]:
     st.subheader("Telegram test")
     st.write("Continuous BUY/SELL monitoring runs in the separate Render background worker.")
     if st.button("Send Telegram test message"):
-        ok, info = send_telegram("NIFTY Pure Price Action V4.2: Telegram test successful.")
+        ok, info = send_telegram("NIFTY Pure Price Action V4.3: Telegram test successful.")
         st.success(info) if ok else st.error(info)
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")

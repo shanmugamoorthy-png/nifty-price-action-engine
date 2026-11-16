@@ -75,10 +75,14 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     # CHoCH->HL state. The baseline is the latest confirmed swing low that existed
     # at the CHoCH event. A lower/equal subsequent pivot invalidates this attempt.
     waiting_for_hl = False
+    waiting_for_pullback_break = False
     choch_reference_low = np.nan
+    pullback_high = np.nan
     choch_hl_up = np.zeros(n, dtype=bool)
     choch_hl_reference = np.full(n, np.nan)
     choch_hl_confirmed_low = np.full(n, np.nan)
+    choch_hl_pullback_high = np.full(n, np.nan)
+    choch_hl_breakout_up = np.zeros(n, dtype=bool)
 
     for i in range(n):
         prior_confirmed_low = last_low
@@ -115,19 +119,34 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
         # Start a new HL sequence only on a confirmed bullish CHoCH.
         if cu:
             waiting_for_hl = np.isfinite(prior_confirmed_low)
+            waiting_for_pullback_break = False
             choch_reference_low = prior_confirmed_low if waiting_for_hl else np.nan
+            pullback_high = np.nan
 
-        # Only pivots confirmed AFTER the CHoCH can validate the higher low.
-        # A pivot confirmed on the same bar as CHoCH is not used.
+        # Stage 1: wait for a later confirmed higher-low pivot.
         if waiting_for_hl and i > 0 and np.isfinite(pivot_l[i]) and not cu:
             if pivot_l[i] > choch_reference_low:
+                pivot_idx = i - pivot_right
+                pullback_high = high[pivot_idx]
                 choch_hl_up[i] = True
                 choch_hl_reference[i] = choch_reference_low
                 choch_hl_confirmed_low[i] = pivot_l[i]
+                choch_hl_pullback_high[i] = pullback_high
                 waiting_for_hl = False
+                waiting_for_pullback_break = True
             else:
                 # A lower/equal low invalidates this CHoCH attempt.
                 waiting_for_hl = False
+                waiting_for_pullback_break = False
+
+        # Stage 2: after the HL confirmation bar, require a candle CLOSE above
+        # the high of the actual pivot-low (pullback) candle. Signal is causal.
+        if waiting_for_pullback_break and i > 0 and not cu and not choch_hl_up[i]:
+            if low[i] <= choch_reference_low:
+                waiting_for_pullback_break = False
+            elif np.isfinite(pullback_high) and close[i] > pullback_high:
+                choch_hl_breakout_up[i] = True
+                waiting_for_pullback_break = False
 
         trend_labels.append(trend)
         bos_up.append(bu); bos_down.append(bd)
@@ -143,6 +162,8 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["choch_hl_up"] = choch_hl_up
     x["choch_hl_reference_low"] = choch_hl_reference
     x["choch_hl_confirmed_low"] = choch_hl_confirmed_low
+    x["choch_hl_pullback_high"] = choch_hl_pullback_high
+    x["choch_hl_breakout_up"] = choch_hl_breakout_up
 
     prev_close = x["close"].shift(1)
     after_orb = x.index.time >= pd.Timestamp("09:30").time()
@@ -151,7 +172,7 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x["prev_day_break_up"] = (prev_close <= x["prev_day_high"]) & (x["close"] > x["prev_day_high"])
     x["prev_day_break_down"] = (prev_close >= x["prev_day_low"]) & (x["close"] < x["prev_day_low"])
 
-    long_cols = ["bos_up", "choch_up", "orb_up", "prev_day_break_up", "liquidity_sweep_up"]
+    long_cols = ["bos_up", "choch_up", "orb_up", "prev_day_break_up", "liquidity_sweep_up", "choch_hl_breakout_up"]
     short_cols = ["bos_down", "choch_down", "orb_down", "prev_day_break_down", "liquidity_sweep_down"]
     x["buy_setup"] = x[long_cols].fillna(False).any(axis=1)
     x["sell_setup"] = x[short_cols].fillna(False).any(axis=1)
@@ -164,5 +185,6 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
         x.loc[active, "signal_reason"] = x.loc[active, "signal_reason"].astype(str).apply(
             lambda s: (s + ", " if s else "") + col
         )
-    x.loc[x["choch_hl_up"], "signal_reason"] = "choch_hl_up"
+    x.loc[x["choch_hl_up"], "signal_reason"] = "choch_hl_confirmed_waiting_breakout"
+    x.loc[x["choch_hl_breakout_up"], "signal_reason"] = "choch_hl_breakout_up"
     return x

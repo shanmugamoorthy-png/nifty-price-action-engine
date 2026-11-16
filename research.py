@@ -4,6 +4,7 @@ from backtest import run_backtest
 
 SETUPS = [
     ("Bullish CHoCH + Higher Low", "choch_hl_up"),
+    ("CHoCH + Higher Low + Pullback-High Breakout", "choch_hl_breakout_up"),
     ("Bullish CHoCH (baseline)", "choch_up"),
     ("Bearish CHoCH (comparison)", "choch_down"),
     ("Bullish BOS", "bos_up"),
