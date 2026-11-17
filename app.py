@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.6", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.6")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.7", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.7")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -62,7 +62,7 @@ def render_results(label, result):
     else:
         st.info("No trades in the selected period.")
 
-tabs = st.tabs(["Dashboard", "Historical download", "Backtest", "Setup research", "Telegram"])
+tabs = st.tabs(["Dashboard", "Historical download", "Backtest", "Setup research", "Telegram", "NIFTY Options Buying"])
 with tabs[0]:
     st.subheader("Signal design")
     st.markdown("""
@@ -321,3 +321,118 @@ with tabs[4]:
         ok, info = send_telegram("NIFTY Pure Price Action V4.6: Telegram test successful.")
         st.success(info) if ok else st.error(info)
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")
+
+with tabs[5]:
+    st.subheader("V4.7 — NIFTY Options Buying Backtest")
+    st.write("NIFTY Spot generates the signal; the corresponding rolling NIFTY option premium is used for entry, stop, target and P&L. Bullish setup buys CE; bearish setup buys PE. This module is a research backtester only and never places orders.")
+    st.warning("Initial V4.7 supports intraday option buying only. Each trade is pinned to the actual strike returned at entry and closed before an overnight/rolling-contract change. Positional option holding is intentionally excluded until exact expiry/contract identity can be locked for every historical bar.")
+    opt_hist = load_saved()
+    if opt_hist is None or opt_hist.empty:
+        st.error("Download the NIFTY Spot 5-minute history first. V4.7 uses it to generate bullish and bearish signals.")
+    else:
+        from options_data import download_rolling_option
+        from options_backtest import run_option_buying_backtest
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            opt_start = st.date_input("Options data start", value=max(opt_hist.index.min().date(), opt_hist.index.max().date()-timedelta(days=30)), key="v47_opt_start")
+        with oc2:
+            opt_end = st.date_input("Options data end", value=opt_hist.index.max().date(), key="v47_opt_end")
+        oc3, oc4, oc5 = st.columns(3)
+        with oc3:
+            opt_expiry_flag = st.selectbox("Expiry type", ["WEEK", "MONTH"], index=0, key="v47_expiry_flag")
+        with oc4:
+            opt_expiry_code = st.selectbox("Expiry sequence", [1, 2, 3], index=0, format_func=lambda v: {1:"Near expiry",2:"Next expiry",3:"Far expiry"}[v], key="v47_expiry_code")
+        with oc5:
+            opt_interval = st.selectbox("Option candle timeframe", [5, 15], index=0, key="v47_interval")
+        st.caption("Dhan rolling expired-options history supports up to five years and up to 30 calendar days per request. Start with 30 days to verify your Dhan data entitlement before requesting a longer period. Near expiry = expiry code 1; ATM is used in this first release.")
+        opt_strike = st.selectbox("Strike selection", ["ATM"], index=0, key="v47_strike")
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        with pc1:
+            premium_stop = st.number_input("Option premium stop (₹ points)", min_value=0.05, value=20.0, step=1.0, key="v47_premium_stop")
+        with pc2:
+            premium_target = st.number_input("Option premium target (₹ points)", min_value=0.05, value=40.0, step=1.0, key="v47_premium_target")
+        with pc3:
+            option_qty = st.number_input("Quantity (units, not lots)", min_value=1, value=1, step=1, key="v47_qty")
+        with pc4:
+            option_slippage = st.number_input("Premium slippage per side (₹)", min_value=0.0, value=0.50, step=0.05, key="v47_slippage")
+        option_brokerage = st.number_input("Brokerage + fees estimate per round trip (₹)", min_value=0.0, value=40.0, step=5.0, key="v47_brokerage")
+        if opt_start > opt_end:
+            st.error("Options start date must be on or before end date.")
+        elif opt_start < opt_hist.index.min().date() or opt_end > opt_hist.index.max().date():
+            st.warning("The selected option test dates must be within the saved NIFTY Spot candle coverage.")
+        else:
+            call_file = os.path.join(DATA_DIR, f"nifty_options_call_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
+            put_file = os.path.join(DATA_DIR, f"nifty_options_put_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
+            fetch_options = st.button("Download / refresh Dhan NIFTY option premiums (CE + PE)", type="primary", key="v47_fetch_options")
+            if fetch_options:
+                try:
+                    opt_client = get_client()
+                    prog = st.progress(0, text="Starting Dhan rolling option history download...")
+                    def opt_progress(p, msg):
+                        prog.progress(min(int(p*100),100), text=msg)
+                    with st.spinner("Downloading actual NIFTY option premium candles..."):
+                        call_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "CALL", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress)
+                        put_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "PUT", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress)
+                    call_df.to_csv(call_file, index_label="timestamp")
+                    put_df.to_csv(put_file, index_label="timestamp")
+                    st.session_state["v47_options_downloaded"] = {"call": call_file, "put": put_file, "start": str(opt_start), "end": str(opt_end)}
+                    st.success(f"Saved actual option candles: CE {len(call_df):,} bars; PE {len(put_df):,} bars.")
+                    st.caption(f"Files saved on persistent disk: {call_file} and {put_file}")
+                except Exception as exc:
+                    st.error(f"Dhan option-history download failed: {exc}")
+            call_exists, put_exists = os.path.exists(call_file), os.path.exists(put_file)
+            if call_exists and put_exists:
+                st.success("Saved CE and PE premium datasets are available for this expiry setting and timeframe.")
+                if st.button("Run V4.7 option-buying backtest", type="primary", key="v47_run_options"):
+                    try:
+                        with st.spinner("Calculating causal NIFTY signals and matching option contracts..."):
+                            spot_signals = add_price_action_signals(opt_hist)
+                            call_bars = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            put_bars = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            # Ensure timezone-naive IST timestamps on both datasets.
+                            for frame in (call_bars, put_bars):
+                                if getattr(frame.index, "tz", None) is not None:
+                                    frame.index = frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                                frame.columns = [str(c).lower() for c in frame.columns]
+                            call_bars = call_bars.loc[(call_bars.index.date >= opt_start) & (call_bars.index.date <= opt_end)]
+                            put_bars = put_bars.loc[(put_bars.index.date >= opt_start) & (put_bars.index.date <= opt_end)]
+                            spot_signals = spot_signals.loc[(spot_signals.index.date >= opt_start) & (spot_signals.index.date <= opt_end)]
+                            # The 50% bullish breakout is the selected long-CE setup; bearish PE uses the engine's bearish price-action events.
+                            spot_signals["buy_setup"] = spot_signals.get("choch_hl_strong_breakout_50_up", False)
+                            # bearish price-action events (BOS/CHoCH, ORB, prior-day break, liquidity sweep)
+                            bearish_cols = [c for c in ["bos_down", "choch_down", "orb_down", "prev_day_break_down", "liquidity_sweep_down"] if c in spot_signals.columns]
+                            spot_signals["sell_setup"] = spot_signals[bearish_cols].fillna(False).any(axis=1) if bearish_cols else False
+                            call_trades, call_metrics = run_option_buying_backtest(
+                                spot_signals, call_bars, "CALL", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage)
+                            put_trades, put_metrics = run_option_buying_backtest(
+                                spot_signals, put_bars, "PUT", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage)
+                            st.session_state["v47_option_results"] = {
+                                "call": (call_trades, call_metrics), "put": (put_trades, put_metrics),
+                                "start": opt_start, "end": opt_end, "expiry": f"{opt_expiry_flag} / code {opt_expiry_code}",
+                                "timeframe": opt_interval, "quantity": int(option_qty),
+                            }
+                    except Exception as exc:
+                        st.error(f"V4.7 option backtest failed: {exc}")
+            if "v47_option_results" in st.session_state:
+                vr = st.session_state["v47_option_results"]
+                st.markdown(f"### Results: {vr['start']} to {vr['end']} • {vr['expiry']} • {vr['timeframe']}m")
+                st.caption(f"Quantity: {vr['quantity']} units per trade. P&L is in INR from actual option premium OHLC, less simulated slippage and entered brokerage/fees estimate.")
+                for label, key in (("BUY CE — bullish NIFTY signals", "call"), ("BUY PE — bearish NIFTY signals", "put")):
+                    trades, metrics = vr[key]
+                    st.markdown(f"#### {label}")
+                    mcols = st.columns(4)
+                    for col, metric_name in zip(mcols, list(metrics.keys())[:4]):
+                        col.metric(metric_name, metrics[metric_name])
+                    mcols2 = st.columns(3)
+                    for col, metric_name in zip(mcols2, list(metrics.keys())[4:]):
+                        col.metric(metric_name, metrics[metric_name])
+                    st.write(f"Completed trades: {len(trades):,}")
+                    if not trades.empty:
+                        st.dataframe(trades, use_container_width=True)
+                    st.download_button(f"Download {key.upper()} option trades CSV", trades.to_csv(index=False).encode("utf-8"),
+                        f"v47_nifty_{key.lower()}_option_trades.csv", "text/csv", key=f"v47_download_{key}")
+                st.info("Execution model: NIFTY signal confirmed at candle close; option bought at next available option candle open. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events (not a mirrored bearish CHoCH-HL model). Premium stop/target checked against option OHLC; if both touch in one candle, stop is assumed first. Trades are intraday only and close when the rolling strike changes or at session square-off. No orders are placed.")
