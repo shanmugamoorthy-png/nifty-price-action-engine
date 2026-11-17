@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.7", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.7")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.7.3", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.7.3")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -323,7 +323,7 @@ with tabs[4]:
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")
 
 with tabs[5]:
-    st.subheader("V4.7 — NIFTY Options Buying Backtest")
+    st.subheader("V4.7.3 — NIFTY Options Buying Backtest")
     st.write("NIFTY Spot generates the signal; the corresponding rolling NIFTY option premium is used for entry, stop, target and P&L. Bullish setup buys CE; bearish setup buys PE. This module is a research backtester only and never places orders.")
     st.warning("Initial V4.7 supports intraday option buying only. Each trade is pinned to the actual strike returned at entry and closed before an overnight/rolling-contract change. Positional option holding is intentionally excluded until exact expiry/contract identity can be locked for every historical bar.")
     opt_hist = load_saved()
@@ -344,7 +344,7 @@ with tabs[5]:
             opt_expiry_code = st.selectbox("Expiry sequence", [1, 2, 3], index=0, format_func=lambda v: {1:"Near expiry",2:"Next expiry",3:"Far expiry"}[v], key="v47_expiry_code")
         with oc5:
             opt_interval = st.selectbox("Option candle timeframe", [5, 15], index=0, key="v47_interval")
-        st.caption("Dhan rolling expired-options history supports up to five years and up to 30 calendar days per request. Start with 30 days to verify your Dhan data entitlement before requesting a longer period. Near expiry = expiry code 1; ATM is used in this first release.")
+        st.caption("Dhan Support confirmed expired-options history permits only ONE calendar day per API request. V4.7.3 downloads dates sequentially, waits between requests, and caches each completed day so an interrupted download can resume. Near expiry = expiry code 1; ATM is used in this release.")
         opt_strike = st.selectbox("Strike selection", ["ATM"], index=0, key="v47_strike")
         pc1, pc2, pc3, pc4 = st.columns(4)
         with pc1:
@@ -367,12 +367,13 @@ with tabs[5]:
             if fetch_options:
                 try:
                     opt_client = get_client()
-                    prog = st.progress(0, text="Starting Dhan rolling option history download...")
+                    prog = st.progress(0, text="Starting Dhan one-day-at-a-time option history download...")
                     def opt_progress(p, msg):
                         prog.progress(min(int(p*100),100), text=msg)
                     with st.spinner("Downloading actual NIFTY option premium candles..."):
-                        call_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "CALL", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress)
-                        put_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "PUT", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress)
+                        cache_root = os.path.join(DATA_DIR, "nifty_options_daily_cache")
+                        call_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "CALL", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress, cache_dir=cache_root)
+                        put_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "PUT", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress, cache_dir=cache_root)
                     call_df.to_csv(call_file, index_label="timestamp")
                     put_df.to_csv(put_file, index_label="timestamp")
                     st.session_state["v47_options_downloaded"] = {"call": call_file, "put": put_file, "start": str(opt_start), "end": str(opt_end)}

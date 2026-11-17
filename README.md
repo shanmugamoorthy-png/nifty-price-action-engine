@@ -37,3 +37,21 @@ The rolling-options request now sends `interval` as an integer (for example, `5`
 Dhan's rolling-option API counts both `fromDate` and `toDate` inclusively and allows at most 30 calendar dates per request. The application stores the selected UI end date as an exclusive boundary, so the downloader now converts it to an inclusive `toDate` and splits requests into at most 30 inclusive calendar dates. For example, 2026-10-17 through 2026-11-16 is sent as 2026-10-17..2026-11-15, then 2026-11-16..2026-11-16.
 
 This fixes the 31-inclusive-day request that caused DH-905 for the default 2026-10-17 through 2026-11-16 selection. The Dhan response still needs to be verified from the user's account after deployment.
+
+## V4.7.3 — Dhan support-confirmed one-day request rule
+
+The user supplied a Dhan Support email stating that expired-options history can now be fetched for **up to one day of data per API request**. For multiple dates, the client must iterate one date at a time and observe applicable rate limits. V4.7.3 follows that account-specific support instruction (which supersedes the earlier 30-day assumption): every request has identical `fromDate` and `toDate` values.
+
+- CE and PE dates are requested sequentially, one calendar day per request.
+- A 1.05-second pause is applied between requests; transient HTTP 429/5xx/network errors receive bounded exponential backoff.
+- Each completed date is cached independently under `DATA_DIR/nifty_options_daily_cache/`. If the app is interrupted, rerunning the same date range reuses completed days and continues with missing days.
+- Daily requests include OHLC, volume, OI, IV, strike and spot in `requiredData`.
+- Update the Render environment variable `DHAN_ACCESS_TOKEN` with the newly regenerated token. Do not paste the token into source code or GitHub. The app's sidebar token field can be used for a temporary session, but the Render environment variable is the persistent setting.
+
+### Deployment
+
+Replace the repository files with this V4.7.3 package and let Render deploy. Keep `DATA_DIR=/var/data`, the existing persistent disk, Dhan client ID, Telegram settings and saved NIFTY Spot history unchanged. After deployment, set the new `DHAN_ACCESS_TOKEN` in Render Environment, save changes and allow the service to restart. The first 31-day CE+PE download may take over a minute because it makes 62 sequential daily requests plus rate-limit pauses. Do not repeatedly click the download button while it is running.
+
+### Verification
+
+Automated tests verify that each request is exactly one calendar date, the interval is an integer, all required option fields are requested, and daily cache prevents already completed days from being downloaded again. A successful live response from the user's Dhan account is still required to confirm account entitlement and payload acceptance.
