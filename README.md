@@ -55,3 +55,40 @@ Replace the repository files with this V4.7.3 package and let Render deploy. Kee
 ### Verification
 
 Automated tests verify that each request is exactly one calendar date, the interval is an integer, all required option fields are requested, and daily cache prevents already completed days from being downloaded again. A successful live response from the user's Dhan account is still required to confirm account entitlement and payload acceptance.
+
+# V4.8 — Absolute-contract-pinned options backtest
+
+V4.8 corrects the earlier V4.7.3 behavior that closed an open trade when the rolling ATM strike changed. An option buyer continues to hold the same absolute strike and expiry after ATM moves; ATM movement is not an exit condition.
+
+## Contract tracking design
+
+- At each NIFTY signal timestamp, the application reads Dhan's actual `strike` value from the ATM (`offset=0`) option series.
+- Entry is the next option candle open for that absolute strike.
+- The downloader first requests ATM for each calendar day. It reads the actual ATM strike range returned by Dhan and then requests the required relative series (`ATM+N`, `ATM-N`) to cover the range of ATM movement during that session.
+- The merged CE/PE dataset retains multiple rows per timestamp, distinguished by their actual absolute `strike` and requested `offset`.
+- While a position is open, the backtester looks up only `(timestamp, original absolute strike)`. A change in the ATM series does not close or replace the position.
+- Positions remain intraday and square off at/after 15:15. Overnight holding is still disabled because this endpoint is rolling expiry-relative data and this release does not yet lock an exact expiry ID across multiple sessions.
+
+## Dhan request handling
+
+The user's Dhan Support email specifies one calendar day per expired-options API request. V4.8 retains this account-specific rule: each request has identical `fromDate` and `toDate`. Each daily offset series is cached separately, so a stopped download can resume without repeating completed requests. The app requests offsets only as wide as the actual ATM strike range for that day, capped at ±10 strikes (the documented near-expiry index-options range). If a session exceeds that coverage, the downloader stops with an explicit error instead of silently switching contracts.
+
+This can require more than one API request per day. The app waits 1.05 seconds between successful uncached requests and applies bounded retry delays for transient HTTP 429/5xx/network errors. The first download may therefore take longer than V4.7.3, depending on the day's ATM movement.
+
+## Backtest accounting
+
+- Premium stop and target are in option premium points.
+- P&L is `(exit premium - entry premium) × quantity`, less premium slippage and the configured round-trip brokerage/fees estimate.
+- Quantity is units, not lots. Set the actual quantity/lot multiple for the contract when evaluating rupee results.
+- If stop and target both fall inside one candle, the conservative assumption is that the stop executes first.
+- No live orders are placed.
+
+## V4.8 deployment
+
+Replace the GitHub repository files with this V4.8 project. Keep the existing Render service, `DATA_DIR=/var/data`, persistent disk, `DHAN_CLIENT_ID`, regenerated `DHAN_ACCESS_TOKEN`, and Telegram settings. V4.8 writes new files named `nifty_options_v48_call_...csv` and `nifty_options_v48_put_...csv`, so the older V4.7 rolling-only exports are not mistaken for contract-pinned data.
+
+After deployment, select the same short date range and settings, download CE+PE once, then run the V4.8 backtest. Verify that the downloaded CSV has multiple rows per timestamp with `strike` and `offset` columns. Review the generated trade CSV: there should be no `Rolling strike changed` exit reason.
+
+## Validation
+
+Run `pytest -q` and `python -m unittest discover -s tests -v`. The test suite includes a synthetic ATM-roll case verifying that a 24,000 option remains open and is tracked at absolute strike 24,000 even when ATM moves to 24,050.

@@ -47,3 +47,20 @@ def test_daily_cache_resumes_without_re_requesting_saved_days(tmp_path):
     # A second run should read the three saved daily files and make no API calls.
     download_rolling_option(client, date(2026, 11, 1), date(2026, 11, 4), **kwargs)
     assert len(client.payloads) == 3
+
+def test_fetches_offset_series_needed_for_fixed_strike_tracking():
+    class MovingSpotClient(FakeClient):
+        def _post(self, endpoint, payload):
+            self.payloads.append((endpoint, payload.copy()))
+            return {"data": {"ce": {
+                "timestamp": [1792215900, 1792216200], "open": [100, 101],
+                "high": [101, 102], "low": [99, 100], "close": [100, 101],
+                "strike": [26000, 26100], "spot": [26000, 26100],
+                "iv": [12.5, 12.5], "volume": [10, 10], "oi": [20, 20]
+            }}}
+    client=MovingSpotClient()
+    df=download_rolling_option(client,date(2026,11,1),date(2026,11,2),"CALL",interval=5,request_delay=0)
+    labels=[p["strike"] for _,p in client.payloads]
+    assert labels == ["ATM","ATM-2","ATM-1","ATM+1","ATM+2"]
+    assert set(df["offset"].astype(int)) == {-2,-1,0,1,2}
+    assert all(p["fromDate"]==p["toDate"]=="2026-11-01" for _,p in client.payloads)
