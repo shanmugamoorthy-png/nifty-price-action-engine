@@ -26,3 +26,8 @@ Use the same Render service and GitHub repository. Keep `DATA_DIR=/var/data`, ex
 ## Testing
 
 Run `python -m unittest discover -s tests -v`. V4.7 includes tests for CE entries, PE entries, premium target/P&L, and forced close when the rolling strike changes.
+
+
+## V4.7.1 API request compatibility fix
+
+The rolling-options request now sends `interval` as an integer (for example, `5`) to match the Dhan Python SDK parameter typing. This addresses a likely cause of Dhan HTTP 400 / DH-905 validation errors. The exact cause must still be confirmed by a successful request against the user's Dhan account.

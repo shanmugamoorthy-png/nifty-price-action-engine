@@ -73,7 +73,7 @@ def download_rolling_option(client, start: date, end_exclusive: date, option_typ
             "strike": strike, "drvOptionType": option_type,
             "requiredData": ["open", "high", "low", "close", "strike", "spot", "iv", "volume"],
             "fromDate": cursor.isoformat(), "toDate": chunk_end.isoformat(),
-            "interval": str(interval),
+            "interval": int(interval),
         }
         body = client._post("/charts/rollingoption", payload)
         part = _extract_series(body, option_type)
