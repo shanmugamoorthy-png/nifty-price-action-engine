@@ -63,26 +63,34 @@ def download_rolling_option(client, start: date, end_exclusive: date, option_typ
         raise ValueError("Unsupported Dhan option interval.")
     if start >= end_exclusive:
         raise ValueError("Start date must be before end date.")
+    # Dhan's rolling-option API allows at most 30 calendar dates per call.
+    # `end_exclusive` is an internal exclusive boundary, while Dhan's `toDate`
+    # is inclusive. Therefore the inclusive request end is at most cursor + 29.
     chunks, cursor, batch = [], start, 0
-    total = ((end_exclusive - start).days + 29) // 30
+    total_days = (end_exclusive - start).days
+    total = (total_days + 29) // 30
     while cursor < end_exclusive:
-        chunk_end = min(cursor + timedelta(days=30), end_exclusive)
+        chunk_to_date = min(cursor + timedelta(days=29), end_exclusive - timedelta(days=1))
         payload = {
             "securityId": "13", "exchangeSegment": "NSE_FNO", "instrument": "OPTIDX",
             "expiryFlag": expiry_flag, "expiryCode": int(expiry_code),
             "strike": strike, "drvOptionType": option_type,
             "requiredData": ["open", "high", "low", "close", "strike", "spot", "iv", "volume"],
-            "fromDate": cursor.isoformat(), "toDate": chunk_end.isoformat(),
+            "fromDate": cursor.isoformat(), "toDate": chunk_to_date.isoformat(),
             "interval": int(interval),
         }
+        # Defensive guard: Dhan counts both fromDate and toDate.
+        request_days = (chunk_to_date - cursor).days + 1
+        if request_days > 30:
+            raise AssertionError(f"Rolling-option request exceeds 30 inclusive days: {request_days}")
         body = client._post("/charts/rollingoption", payload)
         part = _extract_series(body, option_type)
         if not part.empty:
             chunks.append(part)
         batch += 1
         if progress:
-            progress(batch / max(total, 1), f"{option_type}: downloaded {batch}/{total} chunks ({cursor} to {chunk_end})")
-        cursor = chunk_end
+            progress(batch / max(total, 1), f"{option_type}: downloaded {batch}/{total} chunks ({cursor} to {chunk_to_date})")
+        cursor = chunk_to_date + timedelta(days=1)
     if not chunks:
         raise DhanAPIError("Dhan returned no rolling option candles. Check API entitlement, token, expiry settings and date range.")
     out = pd.concat(chunks).sort_index()

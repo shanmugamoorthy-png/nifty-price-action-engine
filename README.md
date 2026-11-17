@@ -31,3 +31,9 @@ Run `python -m unittest discover -s tests -v`. V4.7 includes tests for CE entrie
 ## V4.7.1 API request compatibility fix
 
 The rolling-options request now sends `interval` as an integer (for example, `5`) to match the Dhan Python SDK parameter typing. This addresses a likely cause of Dhan HTTP 400 / DH-905 validation errors. The exact cause must still be confirmed by a successful request against the user's Dhan account.
+
+## V4.7.2 rolling-options date-window fix
+
+Dhan's rolling-option API counts both `fromDate` and `toDate` inclusively and allows at most 30 calendar dates per request. The application stores the selected UI end date as an exclusive boundary, so the downloader now converts it to an inclusive `toDate` and splits requests into at most 30 inclusive calendar dates. For example, 2026-10-17 through 2026-11-16 is sent as 2026-10-17..2026-11-15, then 2026-11-16..2026-11-16.
+
+This fixes the 31-inclusive-day request that caused DH-905 for the default 2026-10-17 through 2026-11-16 selection. The Dhan response still needs to be verified from the user's account after deployment.
