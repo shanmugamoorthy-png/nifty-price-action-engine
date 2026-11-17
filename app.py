@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.5", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.5")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.6", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.6")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -72,8 +72,8 @@ with tabs[0]:
     - Opening range breakout: first three 5-minute candles, actionable after 09:30 IST.
     - Previous trading-day high/low breaks.
     - V4.3 baseline: bullish CHoCH, then a later confirmed higher low, then a candle close above the pivot-low candle high. Entry is next candle open.
-    - V4.5 retest: after breakout, retain the correct breakout level, then wait up to 48 bars for a later touch and close back at/above it; cancel on structure failure or expiry. Entry is next candle open.
-    - V4.4 benchmark / V4.5 threshold tests: bullish breakout candle with body/range at least 40%, 50%, or 60%, and close in the upper 25% of its range. Entry is next candle open.
+    - V4.6 retest: after breakout, retain the correct breakout level, then wait up to 48 bars for a later touch and close back at/above it; cancel on structure failure or expiry. Entry is next candle open.
+    - V4.4 benchmark / V4.6 threshold tests: bullish breakout candle with body/range at least 40%, 50%, or 60%, and close in the upper 25% of its range. Entry is next candle open.
     - Combined entry = any non-conflicting event above. No indicators, OI or volume filters.
     """)
     st.info("OI and volume are excluded from signal generation. NIFTY Spot is an index, not a tradable contract; results are index points.")
@@ -152,8 +152,8 @@ with tabs[2]:
 
 
 with tabs[3]:
-    st.subheader("Setup-isolation research — V4.5")
-    st.write("Compare the preserved V4.4 benchmark, V4.5 40%/50%/60% breakout thresholds, and the repaired retest setup. Run one setup at a time; intraday and positional portfolios are independent.")
+    st.subheader("Setup-isolation research — V4.6")
+    st.write("Compare the preserved V4.4 benchmark, V4.6 40%/50%/60% breakout thresholds, and the repaired retest setup. V4.6 adds chronological out-of-sample validation, monthly diagnostics, losing-streak analysis, and a 1:2 target comparison. Run one setup at a time; intraday and positional portfolios are independent.")
     research_data = load_saved()
     if research_data is not None and not research_data.empty:
         from price_action import add_price_action_signals
@@ -169,11 +169,11 @@ with tabs[3]:
             research_start = st.date_input(
                 "Research start date",
                 value=research_data.index.min().date(),
-                key="research_start_v45"
+                key="research_start_v46"
             )
         with rc2:
             research_end = st.date_input(
-                "Research end date", value=research_data.index.max().date(), key="research_end_v45"
+                "Research end date", value=research_data.index.max().date(), key="research_end_v46"
             )
 
         setup_labels = [label for label, col in SETUPS]
@@ -181,14 +181,14 @@ with tabs[3]:
             "Select ONE setup",
             setup_labels,
             index=setup_labels.index("V4.3 Baseline — Pullback-High Breakout"),
-            key="selected_setup_v45"
+            key="selected_setup_v46"
         )
         selected_column = dict(SETUPS)[selected_setup]
         research_mode = st.selectbox(
-            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v45"
+            "Portfolio mode", ["Both (separate)", "Intraday", "Positional"], index=0, key="research_mode_v46"
         )
         st.caption("Five-year default: earliest saved candle through latest saved candle. Both mode runs two independent portfolios, not a combined position.")
-        if st.button("Run selected setup", type="primary", key="run_selected_setup_v45"):
+        if st.button("Run selected setup", type="primary", key="run_selected_setup_v46"):
             if research_start > research_end:
                 st.error("Research start must be on or before research end.")
             else:
@@ -212,7 +212,7 @@ with tabs[3]:
                         results[mode_name] = run_backtest(signals, mode=mode_name, **common)
                         progress.progress(int(idx / len(selected_modes) * 100),
                                           text=f"Completed {mode_name} portfolio ({idx}/{len(selected_modes)})")
-                    st.session_state["v45_research_results"] = {
+                    st.session_state["v46_research_results"] = {
                         "setup": selected_setup, "column": selected_column, "results": results,
                         "start": research_start, "end": research_end
                     }
@@ -220,8 +220,8 @@ with tabs[3]:
                     st.error(f"Research failed: {exc}")
 
 
-        if "v45_research_results" in st.session_state:
-            saved_result = st.session_state["v45_research_results"]
+        if "v46_research_results" in st.session_state:
+            saved_result = st.session_state["v46_research_results"]
             st.subheader(f'{saved_result["setup"]} — {saved_result["start"]} to {saved_result["end"]}')
             for mode_name, result_tuple in saved_result["results"].items():
                 signal_frame, trades, metrics = result_tuple
@@ -245,16 +245,79 @@ with tabs[3]:
                     trades.to_csv(index=False).encode("utf-8"),
                     f"choch_hl_{mode_name.lower()}_trades.csv",
                     "text/csv",
-                    key=f"download_{mode_name.lower()}_v45"
+                    key=f"download_{mode_name.lower()}_v46"
                 )
-            st.info("V4.3 baseline: close above pivot-low candle high. V4.5 retest fix: retains the breakout level from the confirmed higher-low event, then requires a later retest and close back at/above that level within 48 bars. V4.5 benchmark remains 50%; V4.5 compares 40%, 50%, and 60% bullish candle body/range thresholds, each requiring close in upper 25% of range. All signals are confirmed at candle close and enter next candle open. Costs and NIFTY index-point reporting are unchanged.")
+            st.info("V4.3 baseline: close above pivot-low candle high. V4.6 retest fix: retains the breakout level from the confirmed higher-low event, then requires a later retest and close back at/above that level within 48 bars. V4.6 benchmark remains 50%; V4.6 compares 40%, 50%, and 60% bullish candle body/range thresholds, each requiring close in upper 25% of range. All signals are confirmed at candle close and enter next candle open. Costs and NIFTY index-point reporting are unchanged.")
+
+        st.divider()
+        st.subheader("V4.6 — Chronological out-of-sample validation")
+        st.write("Choose a setup and a chronological split. The training window ends before the out-of-sample window begins; trades are not shuffled. The out-of-sample period is the key validation result, not the training result.")
+        from validation import run_walk_forward, monthly_summary, run_target_ratio_comparison
+        default_split = research_data.index.min().date() + timedelta(days=int((research_data.index.max().date() - research_data.index.min().date()).days * 0.70))
+        wf1, wf2, wf3 = st.columns(3)
+        with wf1:
+            wf_setup = st.selectbox("Validation setup", setup_labels,
+                index=setup_labels.index("V4.5 Strong Breakout — 50% body") if "V4.5 Strong Breakout — 50% body" in setup_labels else 0,
+                key="v46_wf_setup")
+        with wf2:
+            wf_mode = st.selectbox("Validation portfolio", ["Intraday", "Positional"], key="v46_wf_mode")
+        with wf3:
+            wf_test_start = st.date_input("Out-of-sample starts", value=default_split, key="v46_wf_test_start")
+        st.caption("Training: first saved date through the day before the selected test start. Out-of-sample: selected test start through latest saved candle. Keep the same setup, costs and dates when comparing variants.")
+        if st.button("Run V4.6 walk-forward validation", type="primary", key="v46_run_walk"):
+            if wf_test_start <= research_data.index.min().date() or wf_test_start > research_data.index.max().date():
+                st.error("Choose an out-of-sample start after the first saved date and no later than the last saved date.")
+            else:
+                try:
+                    wf_signals = cached_research_signals(research_data)
+                    wf_train_end = wf_test_start - timedelta(days=1)
+                    train_result, test_result = run_walk_forward(
+                        wf_signals, dict(SETUPS)[wf_setup], research_data.index.min().date(), wf_train_end,
+                        wf_test_start, research_data.index.max().date(), stop_points=stop_points,
+                        target_points=target_points, brokerage_per_round_trip_inr=brokerage_inr,
+                        slippage_points_per_side=slippage, mode=wf_mode)
+                    rr_table, rr_details = run_target_ratio_comparison(
+                        wf_signals, dict(SETUPS)[wf_setup], wf_test_start, research_data.index.max().date(),
+                        stop_points=stop_points, baseline_target_points=target_points,
+                        brokerage_per_round_trip_inr=brokerage_inr,
+                        slippage_points_per_side=slippage, mode=wf_mode)
+                    st.session_state["v46_walk_results"] = {
+                        "setup": wf_setup, "mode": wf_mode, "train": train_result,
+                        "test": test_result, "rr_table": rr_table, "rr_details": rr_details,
+                        "test_start": wf_test_start, "test_end": research_data.index.max().date()
+                    }
+                except Exception as exc:
+                    st.error(f"Walk-forward validation failed: {exc}")
+        if "v46_walk_results" in st.session_state:
+            wr = st.session_state["v46_walk_results"]
+            st.markdown(f"### {wr['setup']} — {wr['mode']}")
+            st.markdown("#### Training period")
+            st.json(wr["train"][2])
+            st.markdown(f"#### Out-of-sample period ({wr['test_start']} to {wr['test_end']})")
+            st.json(wr["test"][2])
+            test_monthly = monthly_summary(wr["test"][1])
+            st.markdown("#### Out-of-sample monthly performance")
+            if test_monthly.empty:
+                st.warning("No completed out-of-sample trades. There is no performance evidence for this period.")
+            else:
+                st.dataframe(test_monthly, use_container_width=True)
+                st.download_button("Download OOS monthly summary CSV", test_monthly.to_csv(index=False).encode("utf-8"),
+                    "v46_oos_monthly_summary.csv", "text/csv", key="v46_monthly_download")
+            st.markdown("#### Out-of-sample target comparison")
+            st.dataframe(wr["rr_table"], use_container_width=True)
+            st.caption("The 1:2 row uses target = 2 × stop distance. If your configured target is already twice the stop, both rows intentionally match. Brokerage is shown separately in INR; statutory charges and contract-level rupee P&L are not included.")
+            for trade_label, trade_result in wr["rr_details"].items():
+                if not trade_result[1].empty:
+                    st.download_button(f"Download {trade_label} OOS trades CSV", trade_result[1].to_csv(index=False).encode("utf-8"),
+                        f"v46_{trade_label.lower().replace(' ', '_')}_oos_trades.csv", "text/csv",
+                        key=f"v46_download_{trade_label.lower().replace(' ', '_')}")
     else:
-        st.info("Download the historical 5-minute dataset first. Setup research runs on the saved OHLC candle data.")
+        st.info("Download the historical 5-minute dataset first. Setup research and chronological out-of-sample validation run on the saved OHLC candle data.")
 
 with tabs[4]:
     st.subheader("Telegram test")
     st.write("Continuous BUY/SELL monitoring runs in the separate Render background worker.")
     if st.button("Send Telegram test message"):
-        ok, info = send_telegram("NIFTY Pure Price Action V4.5: Telegram test successful.")
+        ok, info = send_telegram("NIFTY Pure Price Action V4.6: Telegram test successful.")
         st.success(info) if ok else st.error(info)
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")

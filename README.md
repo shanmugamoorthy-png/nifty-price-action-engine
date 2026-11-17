@@ -118,3 +118,16 @@ V4.5 preserves the V4.4 50% Strong Breakout Candle stream as the benchmark and a
 The V4.4 retest zero-trade defect was caused by reading the breakout level from the breakout bar, although that level was only stored on the earlier higher-low confirmation bar. V4.5 now retains that confirmed pullback-candle high across the subsequent breakout and retest stages. A retest must occur on a later candle, touch or trade below the stored breakout level, and close back at/above it. The setup is cancelled if price reaches the pre-CHoCH baseline or if no retest occurs within 48 bars. This bounds stale setups; it does not guarantee that the dataset will produce retest signals.
 
 Setup Research now displays the count of confirmed setup signals in the selected date range in addition to completed trade count, helping distinguish a zero-signal condition from trades not completed by the backtester. Run the V4.4 50% benchmark and V4.5 40%/50%/60% streams separately with identical dates and costs. Do not infer profitability until the full historical tests and an out-of-sample period are reviewed.
+
+## V4.6 — Out-of-sample validation and robustness checks
+
+V4.6 preserves all V4.5 setup streams, including the V4.4 50% Strong Breakout benchmark, and adds a chronological validation workflow:
+
+- Select a setup and Intraday or Positional mode.
+- Choose the first out-of-sample date. The training window ends the prior calendar day; the test window begins on the selected date. The default split is approximately 70% chronological development / 30% out-of-sample by calendar time.
+- Training and out-of-sample portfolios are backtested independently. No random shuffle is used. Signals are calculated with the existing causal confirmed-pivot logic; pre-test candles remain available to establish already-confirmed market structure.
+- Out-of-sample monthly report includes trade count, wins, win rate, net index points after slippage, profit factor and estimated brokerage.
+- Training and out-of-sample metrics include maximum consecutive losing trades.
+- A separate out-of-sample target comparison evaluates the configured target and a 1:2 risk/reward target (target distance = 2 × stop distance), using the same stop, signal stream, dates and costs.
+
+Important interpretation: when the configured target is already 2 × stop (the default 30/60), the two target rows intentionally match. This comparison becomes informative when the configured target differs from 2R. A single historical split is not a guarantee of future performance; consider multiple chronological periods and forward paper trading. Brokerage is displayed separately in INR, not converted from index points. Statutory fees and tradable-contract rupee P&L are not included.
