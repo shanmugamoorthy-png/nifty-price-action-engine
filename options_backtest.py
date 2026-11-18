@@ -2,6 +2,18 @@
 import pandas as pd
 
 
+
+def calculate_rvol(volume, lookback=20):
+    """Current completed candle volume divided by the mean of prior completed candles."""
+    if lookback < 1:
+        raise ValueError("RVOL lookback must be positive")
+    v = pd.to_numeric(pd.Series(volume), errors="coerce")
+    valid = v.where(v > 0)
+    prior_mean = valid.shift(1).rolling(lookback, min_periods=lookback).mean()
+    rvol = valid / prior_mean
+    return rvol.where(prior_mean > 0)
+
+
 def _metrics(trades, quantity, brokerage):
     if trades.empty:
         return ({"Trades": 0, "Win rate %": 0.0, "Gross P&L ₹": 0.0,

@@ -9,6 +9,8 @@
   "tests/test_options_backtest.py::OptionBacktestTests::test_bullish_signal_buys_call_and_target",
   "tests/test_options_backtest.py::OptionBacktestTests::test_empty_trades_returns_valid_metrics",
   "tests/test_options_backtest.py::OptionBacktestTests::test_put_uses_bearish_signal",
+  "tests/test_options_backtest.py::RVOLTests::test_rvol_rejects_zero_or_missing_volume",
+  "tests/test_options_backtest.py::RVOLTests::test_rvol_uses_only_previous_twenty_completed_bars",
   "tests/test_options_backtest.py::V410FilterTests::test_bullish_candle_confirmation_filters_weak_signal",
   "tests/test_options_backtest.py::V410FilterTests::test_max_one_entry_per_day",
   "tests/test_options_data.py::test_31_days_makes_31_separate_daily_requests",

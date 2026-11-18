@@ -91,3 +91,19 @@ class V410FilterTests(unittest.TestCase):
         trades,_=run_option_buying_backtest(spot,opt,'CALL',2,100,quantity=1,
             slippage_per_side=0,brokerage_round_trip=0,require_candle_confirmation=True)
         self.assertTrue(trades.empty)
+
+
+class RVOLTests(unittest.TestCase):
+    def test_rvol_uses_only_previous_twenty_completed_bars(self):
+        from options_backtest import calculate_rvol
+        values = [100.0] * 20 + [200.0]
+        result = calculate_rvol(values, lookback=20)
+        self.assertTrue(pd.isna(result.iloc[19]))
+        self.assertAlmostEqual(float(result.iloc[20]), 2.0)
+
+    def test_rvol_rejects_zero_or_missing_volume(self):
+        from options_backtest import calculate_rvol
+        values = [100.0] * 20 + [0.0, 150.0]
+        result = calculate_rvol(values, lookback=20)
+        self.assertTrue(pd.isna(result.iloc[20]))
+        self.assertTrue(pd.isna(result.iloc[21]))

@@ -13,9 +13,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.10", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.10 research test")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.12", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.12 volume confirmation test")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -331,7 +331,7 @@ with tabs[5]:
         st.error("Download the NIFTY Spot 5-minute history first. V4.8.1 uses it to generate bullish and bearish signals.")
     else:
         from options_data import download_rolling_option
-        from options_backtest import run_option_buying_backtest
+        from options_backtest import run_option_buying_backtest, calculate_rvol
         oc1, oc2 = st.columns(2)
         with oc1:
             opt_start = st.date_input("Options data start", value=max(opt_hist.index.min().date(), opt_hist.index.max().date()-timedelta(days=30)), key="v48_opt_start")
@@ -570,6 +570,83 @@ with tabs[5]:
                                 "text/csv", key=f"v411_dl_{strength}_{side_key}")
                 st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
                 st.caption("Compare each row against V4.10 using identical dates, expiry, timeframe, lots, lot size, stop, target, slippage and brokerage. The 50% row is the closest V4.10-equivalent control; only the confirmation threshold changes.")
+            st.markdown("#### V4.12 — 60% price action + Spot volume confirmation")
+            st.caption("Uses NIFTY Spot 5-minute volume. Each signal candle must be direction-confirmed (green CALL / red PUT), have at least 60% body-to-range, close in the top/bottom 30%, and meet the selected RVOL threshold. RVOL = current completed candle volume ÷ average volume of the PREVIOUS 20 completed candles. The current candle is excluded from its average.")
+            st.info("Volume is taken from saved NIFTY Spot candles, not option premium volume. At least 20 prior valid volume candles are required. Missing, zero or invalid volume is not treated as confirmation.")
+            if st.button("Run V4.12 volume matrix (RVOL 1.2x / 1.5x / 2.0x)", type="primary", key="v412_run_options"):
+                try:
+                    with st.spinner("Calculating V4.12 volume-confirmed trades from saved NIFTY Spot and option candles..."):
+                        spot_all = add_price_action_signals(opt_hist)
+                        if "volume" not in spot_all.columns:
+                            raise ValueError("Saved NIFTY Spot dataset has no volume column. Download fresh 5-minute Spot candles from Dhan before running V4.12.")
+                        spot_all["volume"] = pd.to_numeric(spot_all["volume"], errors="coerce")
+                        if int((spot_all["volume"] > 0).sum()) < 21:
+                            raise ValueError("Insufficient valid NIFTY Spot volume. V4.12 needs at least 21 positive-volume candles.")
+                        spot_all["v412_rvol"] = calculate_rvol(spot_all["volume"], lookback=20).to_numpy()
+                        spot_signals_base = spot_all.loc[(spot_all.index.date >= opt_start) & (spot_all.index.date <= opt_end)].copy()
+                        spot_signals_base["buy_setup"] = spot_signals_base.get("choch_hl_strong_breakout_50_up", False)
+                        bearish_cols = [c for c in ["bos_down", "choch_down", "orb_down", "prev_day_break_down", "liquidity_sweep_down"] if c in spot_signals_base.columns]
+                        spot_signals_base["sell_setup"] = spot_signals_base[bearish_cols].fillna(False).any(axis=1) if bearish_cols else False
+                        call_bars = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        put_bars = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        for frame in (call_bars, put_bars):
+                            if getattr(frame.index, "tz", None) is not None:
+                                frame.index = frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                            frame.columns = [str(c).lower() for c in frame.columns]
+                        call_bars = call_bars.loc[(call_bars.index.date >= opt_start) & (call_bars.index.date <= opt_end)]
+                        put_bars = put_bars.loc[(put_bars.index.date >= opt_start) & (put_bars.index.date <= opt_end)]
+                        v412_matrix = {}
+                        for threshold in (1.2, 1.5, 2.0):
+                            filtered = spot_signals_base.loc[spot_signals_base["v412_rvol"] >= threshold].copy()
+                            call_t, call_m = run_option_buying_backtest(
+                                filtered, call_bars, "CALL", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, max_trades_per_day=1,
+                                require_candle_confirmation=True, confirmation_body_min=0.60,
+                                confirmation_close_edge=0.70)
+                            put_t, put_m = run_option_buying_backtest(
+                                filtered, put_bars, "PUT", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, max_trades_per_day=1,
+                                require_candle_confirmation=True, confirmation_body_min=0.60,
+                                confirmation_close_edge=0.70)
+                            v412_matrix[f"{threshold:.1f}x"] = {"call":(call_t,call_m),"put":(put_t,put_m)}
+                        st.session_state["v412_option_results"] = {
+                            "matrix":v412_matrix, "start":opt_start, "end":opt_end,
+                            "expiry":f"{opt_expiry_flag} / code {opt_expiry_code}",
+                            "timeframe":opt_interval, "quantity":int(option_qty),
+                            "lots":int(option_lots), "lot_size":int(option_lot_size),
+                            "stop":float(premium_stop), "target":float(premium_target),
+                            "slippage":float(option_slippage), "brokerage":float(option_brokerage)}
+                except Exception as exc:
+                    st.error(f"V4.12 volume backtest failed: {exc}")
+            if "v412_option_results" in st.session_state:
+                vr12 = st.session_state["v412_option_results"]
+                st.markdown("### V4.12 volume-confirmed results")
+                st.caption(f"{vr12['start']} to {vr12['end']} • {vr12['expiry']} • option {vr12['timeframe']}m • {vr12['lots']} lot(s) × {vr12['lot_size']} = {vr12['quantity']} units • 60% body + direction + close-location confirmation • one trade per direction/day.")
+                rows12 = []
+                for threshold, sides in vr12["matrix"].items():
+                    combined12 = [t for t,_ in sides.values() if not t.empty]
+                    all12 = pd.concat(combined12, ignore_index=True) if combined12 else pd.DataFrame()
+                    rows12.append({"RVOL threshold":threshold,"Trades":len(all12),
+                        "Win rate":f"{(all12['net_pnl_inr']>0).mean()*100:.2f}%" if not all12.empty else "0.00%",
+                        "Gross P&L ₹":float(all12["gross_pnl_inr"].sum()) if not all12.empty else 0.0,
+                        "Slippage ₹":float(all12["slippage_inr"].sum()) if not all12.empty else 0.0,
+                        "Brokerage ₹":float(all12["brokerage_inr"].sum()) if not all12.empty else 0.0,
+                        "Net P&L ₹":float(all12["net_pnl_inr"].sum()) if not all12.empty else 0.0})
+                    for side_name, side_key in (("CALL","call"),("PUT","put")):
+                        trades12, metrics12 = sides[side_key]
+                        st.markdown(f"#### RVOL {threshold} — {side_name}")
+                        if not trades12.empty:
+                            st.dataframe(trades12, use_container_width=True)
+                            st.download_button(f"Download V4.12 {threshold} {side_name} CSV",
+                                trades12.to_csv(index=False).encode("utf-8"),
+                                f"v412_rvol_{threshold.replace('.','')}_{side_name.lower()}_trades.csv",
+                                "text/csv", key=f"v412_dl_{threshold}_{side_key}")
+                        else:
+                            st.caption("No completed trades for this side at this threshold.")
+                st.dataframe(pd.DataFrame(rows12), hide_index=True, use_container_width=True)
+                st.caption("Use identical date range, expiry, option timeframe, lots, historical lot size, premium stop/target, slippage and brokerage when comparing V4.12 with V4.11. RVOL is calculated from previous 20 completed Spot candles; no future data is used.")
             if "v410_option_results" in st.session_state:
                 vr10 = st.session_state["v410_option_results"]
                 st.markdown("### V4.10 filtered results")

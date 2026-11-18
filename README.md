@@ -125,3 +125,18 @@ The V4.10 filters are research hypotheses, not evidence of profitability. Run ag
 V4.11 preserves the V4.9 baseline and V4.10 filtered run. It adds a separate matrix testing candle-body strength thresholds of 50%, 60%, and 70%, each combined with a selectable close-location threshold (top/bottom 30%, 25%, or 20%). The one-trade-per-option-direction-per-day limit remains enabled for every V4.11 run. CALL and PUT results are reported separately and combined.
 
 For a controlled comparison, use exactly the same date range, expiry type/code, option timeframe, lot count, historical lot size, premium stop/target, slippage, and brokerage as V4.10. The 50% body + top/bottom 30% row is the closest control. These are research experiments; no strategy is assumed profitable.
+
+
+# V4.12 — NIFTY Spot volume-confirmed options buying experiment
+
+V4.12 preserves the V4.9 unfiltered baseline, V4.10 combined filter, and V4.11 body-strength matrix. It adds a separate volume-confirmation matrix using the saved NIFTY Spot 5-minute candle volume (not option premium volume).
+
+- Fixed price-action confirmation: candle body >= 60% of candle range; CALL candle must be bullish and close in the top 30%; PUT candle must be bearish and close in the bottom 30%.
+- Volume direction confirmation is inherent in the green CALL / red PUT candle requirement.
+- RVOL thresholds tested independently: 1.2x, 1.5x and 2.0x.
+- RVOL = current completed candle volume / mean volume of the previous 20 completed candles. Current candle is excluded from the rolling average; missing/zero volume and insufficient lookback history do not pass.
+- Maximum one entry per direction per trading day remains enabled.
+- CALL and PUT are reported separately and together. All costs and lot assumptions are inherited from the same UI controls as previous tests.
+- Requires valid `volume` in the saved NIFTY Spot dataset. If volume is missing or unusable, the test stops with an explanatory message; it does not silently substitute zero volume.
+
+Use identical dates, expiry, option timeframe, lots, historical lot size, premium stop/target, slippage and brokerage when comparing V4.12 to V4.11. No live orders are placed. Results are research only.
