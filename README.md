@@ -118,3 +118,10 @@ V4.10 preserves the V4.9 contract-pinned, lot-based options backtester and adds 
 - Comparison is meaningful only when date range, expiry, timeframe, lot size, slippage and brokerage match. The reference baseline is a historical uploaded sample, not a forecast.
 
 The V4.10 filters are research hypotheses, not evidence of profitability. Run against the same saved Dhan option datasets first; do not place live orders based on these results.
+
+
+# V4.11 — Combined candle confirmation-strength matrix
+
+V4.11 preserves the V4.9 baseline and V4.10 filtered run. It adds a separate matrix testing candle-body strength thresholds of 50%, 60%, and 70%, each combined with a selectable close-location threshold (top/bottom 30%, 25%, or 20%). The one-trade-per-option-direction-per-day limit remains enabled for every V4.11 run. CALL and PUT results are reported separately and combined.
+
+For a controlled comparison, use exactly the same date range, expiry type/code, option timeframe, lot count, historical lot size, premium stop/target, slippage, and brokerage as V4.10. The 50% body + top/bottom 30% row is the closest control. These are research experiments; no strategy is assumed profitable.

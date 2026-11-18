@@ -499,6 +499,77 @@ with tabs[5]:
                             }
                     except Exception as exc:
                         st.error(f"V4.10 filtered option backtest failed: {exc}")
+            st.markdown("#### V4.11 combined confirmation-strength experiment")
+            st.caption("Keeps V4.10 one-trade-per-direction/day rule. Tests candle-body strength at 50%, 60%, and 70%, combined with the same close-location rule (CALL top 30%, PUT bottom 30%).")
+            v411_close_edge = st.selectbox("V4.11 close-location threshold", [0.70, 0.75, 0.80], index=0,
+                format_func=lambda v: {0.70:"Top/bottom 30%",0.75:"Top/bottom 25%",0.80:"Top/bottom 20%"}[v],
+                key="v411_close_edge")
+            if st.button("Run V4.11 combined test matrix (50% / 60% / 70%)", type="primary", key="v411_run_options"):
+                try:
+                    with st.spinner("Running V4.11 strength matrix on the same saved Dhan datasets..."):
+                        spot_signals = add_price_action_signals(opt_hist)
+                        call_bars = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        put_bars = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        for frame in (call_bars, put_bars):
+                            if getattr(frame.index, "tz", None) is not None:
+                                frame.index = frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                            frame.columns = [str(c).lower() for c in frame.columns]
+                        call_bars = call_bars.loc[(call_bars.index.date >= opt_start) & (call_bars.index.date <= opt_end)]
+                        put_bars = put_bars.loc[(put_bars.index.date >= opt_start) & (put_bars.index.date <= opt_end)]
+                        spot_signals = spot_signals.loc[(spot_signals.index.date >= opt_start) & (spot_signals.index.date <= opt_end)].copy()
+                        spot_signals["buy_setup"] = spot_signals.get("choch_hl_strong_breakout_50_up", False)
+                        bearish_cols = [c for c in ["bos_down", "choch_down", "orb_down", "prev_day_break_down", "liquidity_sweep_down"] if c in spot_signals.columns]
+                        spot_signals["sell_setup"] = spot_signals[bearish_cols].fillna(False).any(axis=1) if bearish_cols else False
+                        matrix = {}
+                        for body_min in (0.50, 0.60, 0.70):
+                            call_t, call_m = run_option_buying_backtest(
+                                spot_signals, call_bars, "CALL", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, max_trades_per_day=1,
+                                require_candle_confirmation=True, confirmation_body_min=body_min,
+                                confirmation_close_edge=float(v411_close_edge))
+                            put_t, put_m = run_option_buying_backtest(
+                                spot_signals, put_bars, "PUT", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, max_trades_per_day=1,
+                                require_candle_confirmation=True, confirmation_body_min=body_min,
+                                confirmation_close_edge=float(v411_close_edge))
+                            matrix[f"{int(body_min*100)}%"] = {"call":(call_t,call_m),"put":(put_t,put_m)}
+                        st.session_state["v411_option_results"] = {
+                            "matrix":matrix, "start":opt_start, "end":opt_end,
+                            "expiry":f"{opt_expiry_flag} / code {opt_expiry_code}",
+                            "timeframe":opt_interval, "quantity":int(option_qty),
+                            "lots":int(option_lots), "lot_size":int(option_lot_size),
+                            "close_edge":float(v411_close_edge), "stop":float(premium_stop),
+                            "target":float(premium_target), "slippage":float(option_slippage),
+                            "brokerage":float(option_brokerage)}
+                except Exception as exc:
+                    st.error(f"V4.11 combined test failed: {exc}")
+            if "v411_option_results" in st.session_state:
+                vr11 = st.session_state["v411_option_results"]
+                st.markdown("### V4.11 combined test matrix")
+                st.caption(f"{vr11['start']} to {vr11['end']} • {vr11['expiry']} • {vr11['timeframe']}m • {vr11['lots']} lot(s) × {vr11['lot_size']} = {vr11['quantity']} units • close location top/bottom {int((1-vr11['close_edge'])*100)}% • one trade per direction/day.")
+                summary_rows = []
+                for strength, sides in vr11["matrix"].items():
+                    all_trades = [t for t,_ in sides.values() if not t.empty]
+                    combined = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()
+                    summary_rows.append({"Body strength":strength,"Trades":len(combined),
+                        "Win rate":f"{(combined['net_pnl_inr']>0).mean()*100:.2f}%" if not combined.empty else "0.00%",
+                        "Gross P&L":float(combined["gross_pnl_inr"].sum()) if not combined.empty else 0.0,
+                        "Slippage":float(combined["slippage_inr"].sum()) if not combined.empty else 0.0,
+                        "Brokerage":float(combined["brokerage_inr"].sum()) if not combined.empty else 0.0,
+                        "Net P&L":float(combined["net_pnl_inr"].sum()) if not combined.empty else 0.0})
+                    for side_name, side_key in (("CALL","call"),("PUT","put")):
+                        side_trades, side_metrics = sides[side_key]
+                        if not side_trades.empty:
+                            st.markdown(f"#### {strength} body — {side_name}")
+                            st.dataframe(side_trades, use_container_width=True)
+                            st.download_button(f"Download V4.11 {strength} {side_name} CSV",
+                                side_trades.to_csv(index=False).encode("utf-8"),
+                                f"v411_{strength.replace('%','')}_{side_name.lower()}_trades.csv",
+                                "text/csv", key=f"v411_dl_{strength}_{side_key}")
+                st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
+                st.caption("Compare each row against V4.10 using identical dates, expiry, timeframe, lots, lot size, stop, target, slippage and brokerage. The 50% row is the closest V4.10-equivalent control; only the confirmation threshold changes.")
             if "v410_option_results" in st.session_state:
                 vr10 = st.session_state["v410_option_results"]
                 st.markdown("### V4.10 filtered results")
@@ -551,3 +622,4 @@ with tabs[5]:
                     st.download_button(f"Download {key.upper()} option trades CSV", trades.to_csv(index=False).encode("utf-8"),
                         f"v48_nifty_{key.lower()}_option_trades.csv", "text/csv", key=f"v48_download_{key}")
                 st.info("V4.9 execution model: NIFTY signal confirmed at candle close; the ATM absolute strike at that signal is selected and bought at the next option candle open. Subsequent bars are matched by the same absolute strike across ATM-relative offset series. A change in ATM does not close the trade. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events. Premium stop/target use option OHLC; if both touch in one candle, stop is assumed first. Intraday only; square-off at 15:15. No orders are placed.")
+
