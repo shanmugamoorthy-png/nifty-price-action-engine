@@ -13,9 +13,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.14", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.14 historical validation")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.15", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.15 data export + historical validation")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.15 saved CE/PE CSV export")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -409,10 +409,10 @@ with tabs[5]:
                 except Exception as exc:
                     st.error(f"Dhan option-history download failed: {exc}")
             call_exists, put_exists = os.path.exists(call_file), os.path.exists(put_file)
+            manifest_file = os.path.join(DATA_DIR, f"nifty_options_v48_skipped_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.json")
             if call_exists and put_exists:
                 st.success("Saved CE and PE premium datasets are available for this expiry setting and timeframe.")
                 import json
-                manifest_file = os.path.join(DATA_DIR, f"nifty_options_v48_skipped_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.json")
                 if os.path.exists(manifest_file):
                     try:
                         with open(manifest_file, "r", encoding="utf-8") as mf:
@@ -425,6 +425,49 @@ with tabs[5]:
                             if skip_p: st.caption("PUT excluded dates: " + ", ".join(x["date"] for x in skip_p))
                     except Exception as manifest_exc:
                         st.warning(f"Could not read skipped-date manifest: {manifest_exc}")
+
+                # V4.15: export the already-saved premium datasets directly from the
+                # persistent disk. This does not call Dhan or modify the source files.
+                st.markdown("#### Download saved option CSV files")
+                st.caption("These buttons export the existing CE/PE files for the expiry type, expiry sequence and timeframe selected above. No new Dhan API request is made.")
+                dl1, dl2 = st.columns(2)
+                if call_exists:
+                    with open(call_file, "rb") as f:
+                        call_csv_bytes = f.read()
+                    dl1.download_button(
+                        "Download saved CALL (CE) CSV",
+                        data=call_csv_bytes,
+                        file_name=os.path.basename(call_file),
+                        mime="text/csv",
+                        key="v415_download_call_csv",
+                    )
+                    st.caption(f"CALL file size: {len(call_csv_bytes):,} bytes")
+                else:
+                    dl1.info("Saved CALL CSV not found for this selection.")
+                if put_exists:
+                    with open(put_file, "rb") as f:
+                        put_csv_bytes = f.read()
+                    dl2.download_button(
+                        "Download saved PUT (PE) CSV",
+                        data=put_csv_bytes,
+                        file_name=os.path.basename(put_file),
+                        mime="text/csv",
+                        key="v415_download_put_csv",
+                    )
+                    st.caption(f"PUT file size: {len(put_csv_bytes):,} bytes")
+                else:
+                    dl2.info("Saved PUT CSV not found for this selection.")
+                if os.path.exists(manifest_file):
+                    with open(manifest_file, "rb") as f:
+                        coverage_bytes = f.read()
+                    st.download_button(
+                        "Download coverage report (JSON)",
+                        data=coverage_bytes,
+                        file_name=os.path.basename(manifest_file),
+                        mime="application/json",
+                        key="v415_download_coverage_json",
+                    )
+
                 if st.button("Run V4.9 baseline (no extra filters) option backtest", type="primary", key="v49_run_options"):
                     try:
                         with st.spinner("Calculating causal NIFTY signals and matching option contracts..."):

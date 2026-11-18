@@ -170,3 +170,13 @@ V4.14 preserves all prior strategy versions and adds chronological in-sample / o
 - Reports separate period summaries, CALL/PUT net P&L, monthly results, drawdown and losing streak, with CSV downloads.
 - For credible validation, download at least 6–12 months of matching Spot and option history before running. Verify the historical contract lot size. A single manual lot-size input applies to all selected trades and does not automatically account for historical lot-size changes.
 - Use out-of-sample results as the main evidence. Do not repeatedly tune on the same out-of-sample period.
+
+# V4.15 — Download saved CALL / PUT premium CSV files
+
+V4.15 preserves the V4.14 historical-validation logic and adds direct export buttons beside the saved CE/PE dataset status in the Historical download section.
+
+- **Download saved CALL (CE) CSV** exports the existing CALL premium CSV for the selected expiry type, expiry sequence and candle timeframe.
+- **Download saved PUT (PE) CSV** exports the existing PUT premium CSV for the same selection.
+- **Download coverage report (JSON)** exports the skipped-date coverage manifest when present.
+- Exports read the existing files from `DATA_DIR` (on Render, `/var/data` when configured) and do not call Dhan, refresh data, alter files, or change credentials.
+- Select the same expiry type, expiry sequence and timeframe used when the data was downloaded. If a file is not present for that selection, the app displays a not-found message rather than exporting a different dataset.
