@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.8", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.8")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.8.1", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.8.1")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -323,12 +323,12 @@ with tabs[4]:
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")
 
 with tabs[5]:
-    st.subheader("V4.8 — NIFTY Options Buying Backtest")
+    st.subheader("V4.8.1 — NIFTY Options Buying Backtest")
     st.write("NIFTY Spot generates the signal; the corresponding rolling NIFTY option premium is used for entry, stop, target and P&L. Bullish setup buys CE; bearish setup buys PE. This module is a research backtester only and never places orders.")
-    st.warning("V4.8 supports intraday option buying only. Each trade is pinned to the absolute strike selected at entry. The downloader fetches the ATM-relative offset series needed to follow that same strike as NIFTY moves; an ATM change alone never closes the position. Positional holding remains disabled.")
+    st.warning("V4.8.1 supports intraday option buying only. Each trade is pinned to the absolute strike selected at entry. The downloader fetches the ATM-relative offset series needed to follow that same strike as NIFTY moves; an ATM change alone never closes the position. Dates requiring more than ±10 strikes are skipped completely and listed in a coverage warning; later dates continue downloading. Positional holding remains disabled.")
     opt_hist = load_saved()
     if opt_hist is None or opt_hist.empty:
-        st.error("Download the NIFTY Spot 5-minute history first. V4.8 uses it to generate bullish and bearish signals.")
+        st.error("Download the NIFTY Spot 5-minute history first. V4.8.1 uses it to generate bullish and bearish signals.")
     else:
         from options_data import download_rolling_option
         from options_backtest import run_option_buying_backtest
@@ -344,7 +344,7 @@ with tabs[5]:
             opt_expiry_code = st.selectbox("Expiry sequence", [1, 2, 3], index=0, format_func=lambda v: {1:"Near expiry",2:"Next expiry",3:"Far expiry"}[v], key="v48_expiry_code")
         with oc5:
             opt_interval = st.selectbox("Option candle timeframe", [5, 15], index=0, key="v48_interval")
-        st.caption("Dhan Support confirmed expired-options history permits only ONE calendar day per API request. V4.8 fetches ATM first, then the required ATM±offset series for each day so an absolute strike can be tracked through the session. Each daily/offset response is cached for resume. Near expiry = expiry code 1.")
+        st.caption("Dhan Support confirmed expired-options history permits only ONE calendar day per API request. V4.8.1 fetches ATM first, then the required ATM±offset series for each day so an absolute strike can be tracked through the session. Each daily/offset response is cached for resume. Near expiry = expiry code 1.")
         opt_strike = st.selectbox("Strike selection", ["ATM"], index=0, key="v48_strike")
         pc1, pc2, pc3, pc4 = st.columns(4)
         with pc1:
@@ -376,15 +376,48 @@ with tabs[5]:
                         put_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "PUT", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress, cache_dir=cache_root)
                     call_df.to_csv(call_file, index_label="timestamp")
                     put_df.to_csv(put_file, index_label="timestamp")
-                    st.session_state["v48_options_downloaded"] = {"call": call_file, "put": put_file, "start": str(opt_start), "end": str(opt_end)}
-                    st.success(f"Saved actual option candles: CE {len(call_df):,} bars; PE {len(put_df):,} bars.")
-                    st.caption(f"Files saved on persistent disk: {call_file} and {put_file}")
+                    import json
+                    skipped_manifest = {
+                        "CALL": call_df.attrs.get("skipped_dates", []),
+                        "PUT": put_df.attrs.get("skipped_dates", []),
+                        "start": str(opt_start), "end": str(opt_end),
+                    }
+                    manifest_file = os.path.join(DATA_DIR, f"nifty_options_v48_skipped_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.json")
+                    with open(manifest_file, "w", encoding="utf-8") as mf:
+                        json.dump(skipped_manifest, mf, indent=2)
+                    st.session_state["v48_options_downloaded"] = {"call": call_file, "put": put_file, "manifest": manifest_file, "start": str(opt_start), "end": str(opt_end)}
+                    st.success(f"Saved option candles: CE {len(call_df):,} bars; PE {len(put_df):,} bars.")
+                    skipped_call = skipped_manifest["CALL"]
+                    skipped_put = skipped_manifest["PUT"]
+                    if skipped_call or skipped_put:
+                        st.warning(f"Partial coverage: {len(skipped_call)} CALL date(s) and {len(skipped_put)} PUT date(s) exceeded the supported ±10 strike range. These dates were excluded completely; later dates were still downloaded.")
+                        if skipped_call:
+                            st.write("CALL skipped dates:", ", ".join(x["date"] for x in skipped_call))
+                        if skipped_put:
+                            st.write("PUT skipped dates:", ", ".join(x["date"] for x in skipped_put))
+                    else:
+                        st.success("No dates exceeded the supported strike range for either option type.")
+                    st.caption(f"Files saved on persistent disk: {call_file}, {put_file}, and skipped-date manifest {manifest_file}")
                 except Exception as exc:
                     st.error(f"Dhan option-history download failed: {exc}")
             call_exists, put_exists = os.path.exists(call_file), os.path.exists(put_file)
             if call_exists and put_exists:
                 st.success("Saved CE and PE premium datasets are available for this expiry setting and timeframe.")
-                if st.button("Run V4.8 contract-pinned option backtest", type="primary", key="v48_run_options"):
+                import json
+                manifest_file = os.path.join(DATA_DIR, f"nifty_options_v48_skipped_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.json")
+                if os.path.exists(manifest_file):
+                    try:
+                        with open(manifest_file, "r", encoding="utf-8") as mf:
+                            saved_manifest = json.load(mf)
+                        skip_c = saved_manifest.get("CALL", [])
+                        skip_p = saved_manifest.get("PUT", [])
+                        if skip_c or skip_p:
+                            st.warning("These saved datasets have incomplete date coverage. Dates listed below are excluded from both contract entry and exit evaluation; interpret results only over the remaining covered sessions.")
+                            if skip_c: st.caption("CALL excluded dates: " + ", ".join(x["date"] for x in skip_c))
+                            if skip_p: st.caption("PUT excluded dates: " + ", ".join(x["date"] for x in skip_p))
+                    except Exception as manifest_exc:
+                        st.warning(f"Could not read skipped-date manifest: {manifest_exc}")
+                if st.button("Run V4.8.1 contract-pinned option backtest", type="primary", key="v48_run_options"):
                     try:
                         with st.spinner("Calculating causal NIFTY signals and matching option contracts..."):
                             spot_signals = add_price_action_signals(opt_hist)
@@ -417,7 +450,7 @@ with tabs[5]:
                                 "timeframe": opt_interval, "quantity": int(option_qty),
                             }
                     except Exception as exc:
-                        st.error(f"V4.8 option backtest failed: {exc}")
+                        st.error(f"V4.8.1 option backtest failed: {exc}")
             if "v48_option_results" in st.session_state:
                 vr = st.session_state["v48_option_results"]
                 st.markdown(f"### Results: {vr['start']} to {vr['end']} • {vr['expiry']} • {vr['timeframe']}m")
@@ -436,4 +469,4 @@ with tabs[5]:
                         st.dataframe(trades, use_container_width=True)
                     st.download_button(f"Download {key.upper()} option trades CSV", trades.to_csv(index=False).encode("utf-8"),
                         f"v48_nifty_{key.lower()}_option_trades.csv", "text/csv", key=f"v48_download_{key}")
-                st.info("V4.8 execution model: NIFTY signal confirmed at candle close; the ATM absolute strike at that signal is selected and bought at the next option candle open. Subsequent bars are matched by the same absolute strike across ATM-relative offset series. A change in ATM does not close the trade. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events. Premium stop/target use option OHLC; if both touch in one candle, stop is assumed first. Intraday only; square-off at 15:15. No orders are placed.")
+                st.info("V4.8.1 execution model: NIFTY signal confirmed at candle close; the ATM absolute strike at that signal is selected and bought at the next option candle open. Subsequent bars are matched by the same absolute strike across ATM-relative offset series. A change in ATM does not close the trade. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events. Premium stop/target use option OHLC; if both touch in one candle, stop is assumed first. Intraday only; square-off at 15:15. No orders are placed.")

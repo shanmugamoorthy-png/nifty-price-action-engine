@@ -129,11 +129,11 @@ def download_rolling_option(client, start: date, end_exclusive: date, option_typ
     cache_root = Path(cache_dir) / f"{expiry_flag.lower()}_{expiry_code}_{interval}m" / option_type.lower() if cache_dir else None
     if cache_root: cache_root.mkdir(parents=True, exist_ok=True)
     all_frames=[]
+    skipped_dates=[]
     for day_no, day in enumerate(days, 1):
         atm = _load_or_fetch_day(client, day, option_type, 0, expiry_flag, expiry_code, interval, cache_root, request_delay)
         if atm.empty:
-            if progress: progress(day_no/len(days), f"{option_type}: no candles on {day}; skipped")
-            all_frames.append(atm)
+            if progress: progress(day_no/len(days), f"{option_type}: no candles on {day}; skipped (non-trading day or no returned data)")
             continue
         if "spot" not in atm or atm["spot"].dropna().empty:
             raise DhanAPIError(f"{day}: Dhan did not return spot values; cannot calculate fixed-contract strike coverage")
@@ -144,7 +144,13 @@ def download_rolling_option(client, start: date, end_exclusive: date, option_typ
         min_atm, max_atm = float(atm_levels.min()), float(atm_levels.max())
         span = int(round((max_atm-min_atm)/STRIKE_STEP))
         if span > MAX_OFFSET:
-            raise DhanAPIError(f"{day}: intraday ATM moved {span} strikes; exceeds supported near-expiry ±{MAX_OFFSET} range. Narrow date or inspect this session.")
+            # Do not include even the ATM rows for this date: the complete set of
+            # absolute strikes cannot be reconstructed from the supported offsets.
+            # Continue with later dates and expose the omission in dataframe attrs.
+            skipped_dates.append({"date": day.isoformat(), "reason": f"intraday ATM moved {span} strikes; Dhan near-expiry range is ±{MAX_OFFSET}"})
+            if progress:
+                progress(day_no/len(days), f"{option_type}: {day_no}/{len(days)} days; SKIPPED {day} (ATM moved {span} strikes, beyond ±{MAX_OFFSET}); continuing")
+            continue
         offsets = range(-span, span+1)
         day_frames=[atm]
         for offset in offsets:
@@ -160,4 +166,7 @@ def download_rolling_option(client, start: date, end_exclusive: date, option_typ
     out=pd.concat(nonempty).sort_index()
     out=out.between_time("09:15", "15:30")
     out.index.name="timestamp"
+    out.attrs["skipped_dates"] = skipped_dates
+    out.attrs["requested_days"] = len(days)
+    out.attrs["included_days"] = len({ts.date() for ts in out.index})
     return out

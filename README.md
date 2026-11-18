@@ -1,8 +1,8 @@
-# NIFTY Pure Price Action Engine — V4.7
+# NIFTY Pure Price Action Engine — V4.8.1
 
 V4.7 retains the V4.6 NIFTY Spot backtester and adds a separate NIFTY Options Buying research tab. No automatic orders are placed.
 
-## V4.7 option-buying model
+## V4.8.1 option-buying model
 
 - Signal source: saved NIFTY 50 Spot 5-minute OHLC (security ID 13, `IDX_I`, `INDEX`).
 - Bullish: V4.5/V4.6 50% Strong Breakout confirmation buys a NIFTY CE.
@@ -10,7 +10,7 @@ V4.7 retains the V4.6 NIFTY Spot backtester and adds a separate NIFTY Options Bu
 - Option data: Dhan rolling expired-options endpoint `/charts/rollingoption`, underlying security ID `13`, segment `NSE_FNO`, instrument `OPTIDX`, expiry flag `WEEK` or `MONTH`, expiry code `1`/`2`/`3`, ATM strike, option type `CALL`/`PUT`.
 - Premium entry: next available option candle open after the completed NIFTY signal candle. Stop/target are measured in option premium points, not NIFTY index points.
 - P&L: premium points × user-entered quantity, less premium slippage and entered brokerage/fees estimate. Quantity is in units, not lots; check the applicable contract lot size before converting to lots.
-- Intraday only: each trade is closed at session end or before the rolling ATM strike changes. Positional options are deliberately disabled because rolling historical series do not provide a safe fixed expiry/contract identity for a multi-day held position in this implementation.
+- Intraday only: each trade is closed at session end or at session end; the exact absolute strike is tracked across ATM-relative offset series. Dates exceeding the supported ±10 near-expiry offset range are excluded completely from the dataset. Positional options are deliberately disabled because rolling historical series do not provide a safe fixed expiry/contract identity for a multi-day held position in this implementation.
 - No option selling, live orders, or auto execution.
 
 ## First test settings
@@ -25,7 +25,7 @@ Use the same Render service and GitHub repository. Keep `DATA_DIR=/var/data`, ex
 
 ## Testing
 
-Run `python -m unittest discover -s tests -v`. V4.7 includes tests for CE entries, PE entries, premium target/P&L, and forced close when the rolling strike changes.
+Run `pytest -q`. V4.8.1 includes tests for CE entries, PE entries, fixed-strike tracking, daily request caching, and skipping unsupported wide-ATM sessions while continuing later dates.
 
 
 ## V4.7.1 API request compatibility fix
@@ -92,3 +92,8 @@ After deployment, select the same short date range and settings, download CE+PE 
 ## Validation
 
 Run `pytest -q` and `python -m unittest discover -s tests -v`. The test suite includes a synthetic ATM-roll case verifying that a 24,000 option remains open and is tracked at absolute strike 24,000 even when ATM moves to 24,050.
+
+
+## V4.8.1 unsupported-date handling
+
+If the intraday ATM strike range on a date exceeds the Dhan near-expiry ATM±10 coverage, the downloader now excludes that entire date for the relevant option type, records the date and reason in a persistent JSON manifest, and continues with later dates. It does not retain partial ATM candles from that unsupported date. The app displays the skipped CALL and PUT dates and warns that the resulting backtest covers only the remaining complete sessions.

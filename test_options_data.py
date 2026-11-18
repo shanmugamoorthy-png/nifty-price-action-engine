@@ -64,3 +64,38 @@ def test_fetches_offset_series_needed_for_fixed_strike_tracking():
     assert labels == ["ATM","ATM-2","ATM-1","ATM+1","ATM+2"]
     assert set(df["offset"].astype(int)) == {-2,-1,0,1,2}
     assert all(p["fromDate"]==p["toDate"]=="2026-11-01" for _,p in client.payloads)
+
+def test_unsupported_wide_atm_day_is_skipped_and_later_days_continue():
+    class WideThenNormalClient(FakeClient):
+        def _post(self, endpoint, payload):
+            self.payloads.append((endpoint, payload.copy()))
+            day = payload["fromDate"]
+            if day == "2026-11-01":
+                # 11 strike steps between first and last ATM values: beyond ±10.
+                strikes = [26000, 26550]
+                spots = [26000, 26550]
+                timestamps = [1793523900, 1793524200]
+                prices = [100, 101]
+            else:
+                strikes = [26000]
+                spots = [26000]
+                timestamps = [1793610300]
+                prices = [100]
+            return {"data": {"ce": {
+                "timestamp": timestamps, "open": prices, "high": [x+1 for x in prices],
+                "low": [x-1 for x in prices], "close": prices,
+                "strike": strikes, "spot": spots, "iv": [12.5]*len(prices),
+                "volume": [10]*len(prices), "oi": [20]*len(prices)
+            }}}
+    client = WideThenNormalClient()
+    df = download_rolling_option(client, date(2026, 11, 1), date(2026, 11, 3),
+                                 "CALL", interval=5, request_delay=0)
+    assert not df.empty
+    assert all(ts.date() != date(2026, 11, 1) for ts in df.index)
+    assert any(ts.date() == date(2026, 11, 2) for ts in df.index)
+    assert df.attrs["skipped_dates"] == [{
+        "date": "2026-11-01",
+        "reason": "intraday ATM moved 11 strikes; Dhan near-expiry range is ±10"
+    }]
+    # The unsupported day is only probed with ATM; no partial offset series is fetched.
+    assert [payload["strike"] for _, payload in client.payloads if payload["fromDate"] == "2026-11-01"] == ["ATM"]
