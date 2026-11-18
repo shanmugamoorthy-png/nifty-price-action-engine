@@ -140,3 +140,20 @@ V4.12 preserves the V4.9 unfiltered baseline, V4.10 combined filter, and V4.11 b
 - Requires valid `volume` in the saved NIFTY Spot dataset. If volume is missing or unusable, the test stops with an explanatory message; it does not silently substitute zero volume.
 
 Use identical dates, expiry, option timeframe, lots, historical lot size, premium stop/target, slippage and brokerage when comparing V4.12 to V4.11. No live orders are placed. Results are research only.
+
+
+# V4.13 — Breakout + retest options-buying experiment
+
+V4.13 preserves the V4.9 baseline, V4.10 combined filters, V4.11 confirmation-strength matrix and V4.12 volume matrix. It adds a separate no-volume breakout-retest run.
+
+- Uses NIFTY Spot OHLC signals and actual Dhan fixed-absolute-strike option premium candles.
+- Bullish/CE and bearish/PE retests are generated separately and symmetrically.
+- A breakout event arms its associated structure level (CHoCH-HL pullback breakout, opening-range boundary, previous-day high/low, or confirmed swing high/low where available).
+- A later candle must retest/trade through the level and close back on the breakout side.
+- Retest candle must have at least 60% body-to-range, correct candle direction, and close in the top 30% (CALL) or bottom 30% (PUT).
+- The breakout candle itself cannot qualify as its own retest. A setup expires after 12 subsequent Spot candles (one hour on 5-minute data); a close back through the level invalidates it.
+- Option entry remains on the next available option candle open; absolute strike pinning, premium stop/target, intraday square-off, lot sizing, slippage and brokerage are unchanged.
+- Maximum one CALL and one PUT entry per trading day. No volume filter is used in V4.13.
+- Retest signals are a new research hypothesis and may materially reduce trade count. No live orders are placed.
+
+Compare V4.13 against V4.11's 60% no-volume control only with identical date coverage, expiry, timeframe, lot size, premium stop/target, slippage and brokerage. The code tests include synthetic bullish and bearish retest cases; live Dhan dataset results must be generated in the deployed app.

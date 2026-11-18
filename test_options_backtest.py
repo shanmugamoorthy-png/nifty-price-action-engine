@@ -107,3 +107,29 @@ class RVOLTests(unittest.TestCase):
         result = calculate_rvol(values, lookback=20)
         self.assertTrue(pd.isna(result.iloc[20]))
         self.assertTrue(pd.isna(result.iloc[21]))
+
+
+class BreakoutRetestSignalTests(unittest.TestCase):
+    def test_bullish_breakout_then_later_retest(self):
+        from price_action import add_breakout_retest_signals
+        idx = pd.date_range("2025-01-02 09:15", periods=3, freq="5min")
+        frame = pd.DataFrame({
+            "open":[99,101,101], "high":[101,105,103], "low":[98,100,100],
+            "close":[100,104,102], "choch_hl_breakout_up":[True,False,False],
+            "choch_hl_pullback_high":[100, float("nan"), float("nan")]
+        }, index=idx)
+        out = add_breakout_retest_signals(frame, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+        self.assertTrue(bool(out["v413_buy_retest"].iloc[1]))
+        self.assertFalse(bool(out["v413_buy_retest"].iloc[0]))
+
+    def test_bearish_breakout_then_later_retest(self):
+        from price_action import add_breakout_retest_signals
+        idx = pd.date_range("2025-01-02 09:15", periods=3, freq="5min")
+        frame = pd.DataFrame({
+            "open":[101,99,99], "high":[102,100,101], "low":[99,95,97],
+            "close":[100,96,98], "orb_down":[True,False,False],
+            "orb_low":[100, float("nan"), float("nan")]
+        }, index=idx)
+        out = add_breakout_retest_signals(frame, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+        self.assertTrue(bool(out["v413_sell_retest"].iloc[1]))
+        self.assertFalse(bool(out["v413_sell_retest"].iloc[0]))

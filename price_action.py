@@ -242,3 +242,84 @@ def add_price_action_signals(df, pivot_left=3, pivot_right=3, orb_bars=3):
     x.loc[x["choch_hl_up"], "signal_reason"] = "choch_hl_confirmed_waiting_breakout"
     x.loc[x["choch_hl_breakout_up"], "signal_reason"] = "choch_hl_breakout_up"
     return x
+
+
+def add_breakout_retest_signals(signals, body_min=0.60, close_edge=0.70, max_wait_bars=12):
+    """Create causal, symmetric breakout-retest signals for CALL/PUT option entries.
+
+    A completed breakout candle arms a level. A later candle must retest that
+    level and close back beyond it with directional body/close-location strength.
+    Entry is still handled by the options backtester on the following option bar.
+    """
+    x = signals.copy().sort_index()
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(x.columns):
+        raise ValueError(f"Breakout-retest signals require {sorted(required)}")
+    if max_wait_bars < 1:
+        raise ValueError("max_wait_bars must be positive")
+    o = pd.to_numeric(x["open"], errors="coerce").to_numpy(float)
+    h = pd.to_numeric(x["high"], errors="coerce").to_numpy(float)
+    l = pd.to_numeric(x["low"], errors="coerce").to_numpy(float)
+    c = pd.to_numeric(x["close"], errors="coerce").to_numpy(float)
+    rng = h - l
+    body = abs(c-o) / pd.Series(rng).replace(0, float("nan")).to_numpy()
+    loc = (c-l) / pd.Series(rng).replace(0, float("nan")).to_numpy()
+
+    def active(col, i):
+        return col in x.columns and bool(x.iloc[i][col]) if col in x.columns else False
+
+    bull_events = [z for z in ("choch_hl_breakout_up", "orb_up", "prev_day_break_up", "bos_up", "choch_up") if z in x.columns]
+    bear_events = [z for z in ("orb_down", "prev_day_break_down", "bos_down", "choch_down") if z in x.columns]
+    bull_levels = {
+        "choch_hl_breakout_up": "choch_hl_pullback_high",
+        "orb_up": "orb_high", "prev_day_break_up": "prev_day_high",
+        "bos_up": "swing_high", "choch_up": "swing_high"}
+    bear_levels = {
+        "orb_down": "orb_low", "prev_day_break_down": "prev_day_low",
+        "bos_down": "swing_low", "choch_down": "swing_low"}
+    bull = [False] * len(x); bear = [False] * len(x)
+    pending_bull = None; pending_bear = None
+
+    for i in range(len(x)):
+        # First evaluate previously armed levels; the breakout candle cannot
+        # also count as its own retest.
+        if pending_bull is not None:
+            level, age = pending_bull
+            age += 1
+            if age > max_wait_bars or c[i] < level:
+                pending_bull = None
+            elif l[i] <= level <= h[i] and c[i] >= level and c[i] > o[i] and body[i] >= body_min and loc[i] >= close_edge:
+                bull[i] = True
+                pending_bull = None
+            else:
+                pending_bull = (level, age)
+        if pending_bear is not None:
+            level, age = pending_bear
+            age += 1
+            if age > max_wait_bars or c[i] > level:
+                pending_bear = None
+            elif l[i] <= level <= h[i] and c[i] <= level and c[i] < o[i] and body[i] >= body_min and loc[i] <= (1.0-close_edge):
+                bear[i] = True
+                pending_bear = None
+            else:
+                pending_bear = (level, age)
+
+        # Arm only after checking the existing pending setup, preventing lookahead.
+        for event in bull_events:
+            if active(event, i):
+                col = bull_levels[event]
+                if col in x.columns and pd.notna(x.iloc[i][col]):
+                    pending_bull = (float(x.iloc[i][col]), 0)
+                    break
+        for event in bear_events:
+            if active(event, i):
+                col = bear_levels[event]
+                if col in x.columns:
+                    val = x.iloc[i][col]
+                    if pd.notna(val):
+                        pending_bear = (float(val), 0)
+                        break
+
+    x["v413_buy_retest"] = bull
+    x["v413_sell_retest"] = bear
+    return x

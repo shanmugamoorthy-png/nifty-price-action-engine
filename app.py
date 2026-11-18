@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.12", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.12 volume confirmation test")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.13", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.13 breakout-retest test")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research")
 
 with st.sidebar:
@@ -156,7 +156,7 @@ with tabs[3]:
     st.write("Compare the preserved V4.4 benchmark, V4.6 40%/50%/60% breakout thresholds, and the repaired retest setup. V4.6 adds chronological out-of-sample validation, monthly diagnostics, losing-streak analysis, and a 1:2 target comparison. Run one setup at a time; intraday and positional portfolios are independent.")
     research_data = load_saved()
     if research_data is not None and not research_data.empty:
-        from price_action import add_price_action_signals
+        from price_action import add_price_action_signals, add_breakout_retest_signals
         from backtest import run_backtest
         from research import SETUPS
         # Prepare cached signals once per dataset. Streamlit hashes the uploaded/saved frame.
@@ -620,6 +620,81 @@ with tabs[5]:
                             "slippage":float(option_slippage), "brokerage":float(option_brokerage)}
                 except Exception as exc:
                     st.error(f"V4.12 volume backtest failed: {exc}")
+            st.markdown("#### V4.13 — 60% breakout + retest experiment")
+            st.caption("No volume filter. A completed breakout arms a structure level; a later candle must retest the level and close back beyond it with a directional 60% body and top/bottom 30% close. Entry is on the next option candle. Retest expires after 12 Spot candles (one hour on 5-minute data).")
+            if st.button("Run V4.13 breakout + retest option backtest", type="primary", key="v413_run_options"):
+                try:
+                    with st.spinner("Building causal breakout-retest signals and matching fixed-strike option candles..."):
+                        spot_signals = add_price_action_signals(opt_hist)
+                        spot_signals = add_breakout_retest_signals(
+                            spot_signals, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                        spot_signals = spot_signals.loc[
+                            (spot_signals.index.date >= opt_start) & (spot_signals.index.date <= opt_end)].copy()
+                        spot_signals["buy_setup"] = spot_signals["v413_buy_retest"].fillna(False)
+                        spot_signals["sell_setup"] = spot_signals["v413_sell_retest"].fillna(False)
+                        spot_signals["signal_reason"] = ""
+                        spot_signals.loc[spot_signals["buy_setup"], "signal_reason"] = "v413_bullish_breakout_retest_60"
+                        spot_signals.loc[spot_signals["sell_setup"], "signal_reason"] = "v413_bearish_breakout_retest_60"
+                        call_bars = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        put_bars = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        for frame in (call_bars, put_bars):
+                            if getattr(frame.index, "tz", None) is not None:
+                                frame.index = frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                            frame.columns = [str(c).lower() for c in frame.columns]
+                        call_bars = call_bars.loc[(call_bars.index.date >= opt_start) & (call_bars.index.date <= opt_end)]
+                        put_bars = put_bars.loc[(put_bars.index.date >= opt_start) & (put_bars.index.date <= opt_end)]
+                        call_t, call_m = run_option_buying_backtest(
+                            spot_signals, call_bars, "CALL", premium_stop, premium_target,
+                            quantity=int(option_qty), slippage_per_side=option_slippage,
+                            brokerage_round_trip=option_brokerage, max_trades_per_day=1)
+                        put_t, put_m = run_option_buying_backtest(
+                            spot_signals, put_bars, "PUT", premium_stop, premium_target,
+                            quantity=int(option_qty), slippage_per_side=option_slippage,
+                            brokerage_round_trip=option_brokerage, max_trades_per_day=1)
+                        st.session_state["v413_option_results"] = {
+                            "call":(call_t,call_m), "put":(put_t,put_m),
+                            "start":opt_start, "end":opt_end,
+                            "expiry":f"{opt_expiry_flag} / code {opt_expiry_code}",
+                            "timeframe":opt_interval, "quantity":int(option_qty),
+                            "lots":int(option_lots), "lot_size":int(option_lot_size),
+                            "stop":float(premium_stop), "target":float(premium_target),
+                            "slippage":float(option_slippage), "brokerage":float(option_brokerage)}
+                except Exception as exc:
+                    st.error(f"V4.13 breakout-retest backtest failed: {exc}")
+            if "v413_option_results" in st.session_state:
+                vr13 = st.session_state["v413_option_results"]
+                st.markdown("### V4.13 breakout + retest results")
+                st.caption(f"{vr13['start']} to {vr13['end']} • {vr13['expiry']} • option {vr13['timeframe']}m • {vr13['lots']} lot(s) × {vr13['lot_size']} = {vr13['quantity']} units • 60% body / 30% close-location • no volume filter • one trade per direction/day.")
+                all13 = []
+                for side_name, side_key in (("CALL","call"),("PUT","put")):
+                    trades13, metrics13 = vr13[side_key]
+                    st.markdown(f"#### {side_name}")
+                    mcols13 = st.columns(4)
+                    for col, metric_name in zip(mcols13, list(metrics13.keys())[:4]):
+                        col.metric(metric_name, metrics13[metric_name])
+                    if not trades13.empty:
+                        all13.append(trades13)
+                        st.dataframe(trades13, use_container_width=True)
+                        st.download_button(f"Download V4.13 {side_name} CSV",
+                            trades13.to_csv(index=False).encode("utf-8"),
+                            f"v413_{side_key}_breakout_retest_trades.csv", "text/csv",
+                            key=f"v413_dl_{side_key}")
+                    else:
+                        st.caption("No completed trades for this side.")
+                if all13:
+                    joined13 = pd.concat(all13, ignore_index=True).sort_values("exit_time")
+                    st.markdown("#### Combined V4.13 summary")
+                    st.dataframe(pd.DataFrame([{
+                        "Trades":len(joined13),
+                        "Win rate":f"{(joined13['net_pnl_inr']>0).mean()*100:.2f}%",
+                        "Gross P&L ₹":joined13["gross_pnl_inr"].sum(),
+                        "Slippage ₹":joined13["slippage_inr"].sum(),
+                        "Brokerage ₹":joined13["brokerage_inr"].sum(),
+                        "Net P&L ₹":joined13["net_pnl_inr"].sum()
+                    }]), hide_index=True, use_container_width=True)
+                else:
+                    st.info("V4.13 generated no completed trades. Do not loosen the rules simply to force trades.")
+                st.caption("Compare with V4.11 60% no-volume control only when dates, expiry, timeframe, lot size, premium stop/target, slippage and brokerage are identical. Historical test only; no orders are placed.")
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
                 st.markdown("### V4.12 volume-confirmed results")
