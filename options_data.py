@@ -104,6 +104,73 @@ def _load_or_fetch_day(client, day, option_type, offset, expiry_flag, expiry_cod
     return frame
 
 
+def merge_saved_option_csv(path, new_frame):
+    """Merge a newly downloaded date batch into an existing fixed-strike CSV.
+
+    Rows are keyed by (timestamp, absolute strike), not timestamp alone, because
+    the rolling dataset intentionally contains several option strikes per candle.
+    New rows replace any overlapping old row for the same timestamp/strike.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    parts = []
+    if path.exists() and path.stat().st_size:
+        old = pd.read_csv(path, parse_dates=["timestamp"])
+        if "timestamp" not in old.columns:
+            raise ValueError(f"Existing option CSV has no timestamp column: {path.name}")
+        if not old.empty:
+            parts.append(old)
+
+    fresh = new_frame.copy()
+    if isinstance(fresh.index, pd.DatetimeIndex):
+        fresh.index.name = "timestamp"
+        fresh = fresh.reset_index()
+    elif "timestamp" not in fresh.columns:
+        raise ValueError("New option batch must have a DatetimeIndex or timestamp column")
+    if "strike" not in fresh.columns:
+        raise ValueError("New option batch has no absolute strike column")
+    if not fresh.empty:
+        parts.append(fresh)
+    if not parts:
+        raise ValueError("No existing or newly downloaded option rows are available to save")
+
+    combined = pd.concat(parts, ignore_index=True, sort=False)
+    combined["timestamp"] = pd.to_datetime(combined["timestamp"], errors="coerce")
+    combined["strike"] = pd.to_numeric(combined["strike"], errors="coerce")
+    combined = combined.dropna(subset=["timestamp", "strike"])
+    if combined.empty:
+        raise ValueError("Merged option dataset contains no valid timestamp/strike rows")
+
+    # Existing rows are appended first and fresh rows last, so keep='last' updates
+    # overlapping records while preserving other strikes at the same timestamp.
+    combined = combined.drop_duplicates(subset=["timestamp", "strike"], keep="last")
+    sort_cols = ["timestamp", "strike"]
+    if "offset" in combined.columns:
+        sort_cols.append("offset")
+    combined = combined.sort_values(sort_cols, kind="mergesort")
+    combined = combined.set_index("timestamp")
+    combined.index.name = "timestamp"
+    combined.to_csv(path, index_label="timestamp")
+    return combined
+
+
+def merge_skipped_dates(old_entries, new_entries, batch_start: date, batch_end: date):
+    """Keep prior skipped dates outside this batch and refresh dates inside it."""
+    by_date = {}
+    for item in (old_entries or []):
+        if isinstance(item, dict) and item.get("date"):
+            by_date[str(item["date"])] = item
+    start_s, end_s = batch_start.isoformat(), batch_end.isoformat()
+    for day in list(by_date):
+        if start_s <= day <= end_s:
+            by_date.pop(day, None)
+    for item in (new_entries or []):
+        if isinstance(item, dict) and item.get("date"):
+            by_date[str(item["date"])] = item
+    return [by_date[k] for k in sorted(by_date)]
+
+
 def download_rolling_option(client, start: date, end_exclusive: date, option_type: str,
                             expiry_flag="WEEK", expiry_code=1, strike="ATM", interval=5,
                             progress=None, cache_dir=None, request_delay=1.05):

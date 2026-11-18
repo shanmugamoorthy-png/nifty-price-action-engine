@@ -13,9 +13,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.15", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.15 data export + historical validation")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.15 saved CE/PE CSV export")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.16", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.16 monthly option-data builder")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -330,7 +330,7 @@ with tabs[5]:
     if opt_hist is None or opt_hist.empty:
         st.error("Download the NIFTY Spot 5-minute history first. V4.8.1 uses it to generate bullish and bearish signals.")
     else:
-        from options_data import download_rolling_option
+        from options_data import download_rolling_option, merge_saved_option_csv, merge_skipped_dates
         from options_backtest import run_option_buying_backtest, calculate_rvol
         oc1, oc2 = st.columns(2)
         with oc1:
@@ -345,6 +345,7 @@ with tabs[5]:
         with oc5:
             opt_interval = st.selectbox("Option candle timeframe", [5, 15], index=0, key="v48_interval")
         st.caption("Dhan Support confirmed expired-options history permits only ONE calendar day per API request. V4.8.1 fetches ATM first, then the required ATM±offset series for each day so an absolute strike can be tracked through the session. Each daily/offset response is cached for resume. Near expiry = expiry code 1.")
+        st.info("V4.16 monthly-batch mode: download no more than 31 calendar days at a time. Each completed batch is MERGED into the saved CE/PE CSV files; earlier months are not overwritten. Daily cache resumes previously completed requests.")
         opt_strike = st.selectbox("Strike selection", ["ATM"], index=0, key="v48_strike")
         pc1, pc2, pc3, pc4 = st.columns(4)
         with pc1:
@@ -371,7 +372,12 @@ with tabs[5]:
         else:
             call_file = os.path.join(DATA_DIR, f"nifty_options_v48_call_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
             put_file = os.path.join(DATA_DIR, f"nifty_options_v48_put_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
-            fetch_options = st.button("Download / refresh fixed-strike Dhan option premiums (CE + PE)", type="primary", key="v49_fetch_options")
+            batch_days = (opt_end - opt_start).days + 1
+            if batch_days > 31:
+                st.warning(f"This selection is {batch_days} calendar days. For reliable monthly batches, select 31 days or fewer before downloading. You can still select the full accumulated period later for backtesting.")
+                fetch_options = st.button("Download / refresh fixed-strike Dhan option premiums (CE + PE)", type="primary", key="v49_fetch_options", disabled=True)
+            else:
+                fetch_options = st.button("Download / refresh fixed-strike Dhan option premiums (CE + PE)", type="primary", key="v49_fetch_options")
             if fetch_options:
                 try:
                     opt_client = get_client()
@@ -382,30 +388,43 @@ with tabs[5]:
                         cache_root = os.path.join(DATA_DIR, "nifty_options_v48_daily_cache")
                         call_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "CALL", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress, cache_dir=cache_root)
                         put_df = download_rolling_option(opt_client, opt_start, opt_end+timedelta(days=1), "PUT", opt_expiry_flag, opt_expiry_code, opt_strike, opt_interval, opt_progress, cache_dir=cache_root)
-                    call_df.to_csv(call_file, index_label="timestamp")
-                    put_df.to_csv(put_file, index_label="timestamp")
+
+                    # V4.16: append/merge this batch into the accumulated fixed-strike CSVs.
+                    merged_call = merge_saved_option_csv(call_file, call_df)
+                    merged_put = merge_saved_option_csv(put_file, put_df)
                     import json
-                    skipped_manifest = {
-                        "CALL": call_df.attrs.get("skipped_dates", []),
-                        "PUT": put_df.attrs.get("skipped_dates", []),
-                        "start": str(opt_start), "end": str(opt_end),
-                    }
                     manifest_file = os.path.join(DATA_DIR, f"nifty_options_v48_skipped_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.json")
+                    old_manifest = {}
+                    if os.path.exists(manifest_file):
+                        try:
+                            with open(manifest_file, "r", encoding="utf-8") as mf:
+                                old_manifest = json.load(mf)
+                        except Exception:
+                            old_manifest = {}
+                    skipped_manifest = {
+                        "CALL": merge_skipped_dates(old_manifest.get("CALL", []), call_df.attrs.get("skipped_dates", []), opt_start, opt_end),
+                        "PUT": merge_skipped_dates(old_manifest.get("PUT", []), put_df.attrs.get("skipped_dates", []), opt_start, opt_end),
+                        "start": min(str(old_manifest.get("start", opt_start)), str(opt_start)),
+                        "end": max(str(old_manifest.get("end", opt_end)), str(opt_end)),
+                        "last_batch": {"start": str(opt_start), "end": str(opt_end)},
+                    }
+                    previous_batches = old_manifest.get("batches", []) if isinstance(old_manifest.get("batches", []), list) else []
+                    skipped_manifest["batches"] = previous_batches + [{"start": str(opt_start), "end": str(opt_end)}]
                     with open(manifest_file, "w", encoding="utf-8") as mf:
                         json.dump(skipped_manifest, mf, indent=2)
                     st.session_state["v48_options_downloaded"] = {"call": call_file, "put": put_file, "manifest": manifest_file, "start": str(opt_start), "end": str(opt_end)}
-                    st.success(f"Saved option candles: CE {len(call_df):,} bars; PE {len(put_df):,} bars.")
+                    st.success(f"Batch merged without replacing previous months. Total saved: CE {len(merged_call):,} rows; PE {len(merged_put):,} rows.")
                     skipped_call = skipped_manifest["CALL"]
                     skipped_put = skipped_manifest["PUT"]
                     if skipped_call or skipped_put:
-                        st.warning(f"Partial coverage: {len(skipped_call)} CALL date(s) and {len(skipped_put)} PUT date(s) exceeded the supported ±10 strike range. These dates were excluded completely; later dates were still downloaded.")
+                        st.warning(f"Coverage gaps retained in the report: {len(skipped_call)} CALL date(s) and {len(skipped_put)} PUT date(s) exceeded the supported ±10 strike range.")
                         if skipped_call:
                             st.write("CALL skipped dates:", ", ".join(x["date"] for x in skipped_call))
                         if skipped_put:
                             st.write("PUT skipped dates:", ", ".join(x["date"] for x in skipped_put))
                     else:
-                        st.success("No dates exceeded the supported strike range for either option type.")
-                    st.caption(f"Files saved on persistent disk: {call_file}, {put_file}, and skipped-date manifest {manifest_file}")
+                        st.success("No dates exceeded the supported strike range in the accumulated manifest.")
+                    st.caption(f"Accumulated files on persistent disk: {call_file}, {put_file}, and coverage manifest {manifest_file}")
                 except Exception as exc:
                     st.error(f"Dhan option-history download failed: {exc}")
             call_exists, put_exists = os.path.exists(call_file), os.path.exists(put_file)
@@ -426,7 +445,7 @@ with tabs[5]:
                     except Exception as manifest_exc:
                         st.warning(f"Could not read skipped-date manifest: {manifest_exc}")
 
-                # V4.15: export the already-saved premium datasets directly from the
+                # V4.15/V4.16: export the accumulated premium datasets directly from the
                 # persistent disk. This does not call Dhan or modify the source files.
                 st.markdown("#### Download saved option CSV files")
                 st.caption("These buttons export the existing CE/PE files for the expiry type, expiry sequence and timeframe selected above. No new Dhan API request is made.")

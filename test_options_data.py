@@ -99,3 +99,54 @@ def test_unsupported_wide_atm_day_is_skipped_and_later_days_continue():
     }]
     # The unsupported day is only probed with ATM; no partial offset series is fetched.
     assert [payload["strike"] for _, payload in client.payloads if payload["fromDate"] == "2026-11-01"] == ["ATM"]
+
+def test_monthly_batch_merge_preserves_other_months_and_all_strikes(tmp_path):
+    from options_data import merge_saved_option_csv
+
+    path = tmp_path / "options.csv"
+    old = pd.DataFrame(
+        {
+            "open": [10.0, 20.0], "high": [11.0, 21.0], "low": [9.0, 19.0],
+            "close": [10.5, 20.5], "strike": [26000.0, 26050.0],
+            "spot": [26010.0, 26010.0], "offset": [0, 1],
+        },
+        index=pd.to_datetime(["2025-11-03 09:15", "2025-11-03 09:15"]),
+    )
+    old.index.name = "timestamp"
+    old.to_csv(path, index_label="timestamp")
+
+    new = pd.DataFrame(
+        {
+            "open": [12.0, 30.0], "high": [13.0, 31.0], "low": [11.0, 29.0],
+            "close": [12.5, 30.5], "strike": [26000.0, 26100.0],
+            "spot": [26020.0, 26020.0], "offset": [0, 2],
+        },
+        index=pd.to_datetime(["2025-11-03 09:15", "2025-12-01 09:15"]),
+    )
+    new.index.name = "timestamp"
+
+    merged = merge_saved_option_csv(path, new)
+    # Old strike 26050 remains, overlapping strike 26000 is refreshed, and
+    # the new December strike is appended.
+    assert len(merged) == 3
+    assert set(merged["strike"].astype(int)) == {26000, 26050, 26100}
+    row = merged[(merged.index == pd.Timestamp("2025-11-03 09:15")) & (merged["strike"] == 26000)]
+    assert float(row.iloc[0]["close"]) == 12.5
+    reread = pd.read_csv(path, parse_dates=["timestamp"])
+    assert len(reread) == 3
+
+
+def test_skipped_date_manifest_merge_preserves_outside_batch_and_refreshes_inside():
+    from options_data import merge_skipped_dates
+    from datetime import date
+
+    old = [
+        {"date": "2025-10-30", "reason": "old gap"},
+        {"date": "2025-11-05", "reason": "old reason"},
+    ]
+    fresh = [{"date": "2025-11-05", "reason": "updated reason"}]
+    merged = merge_skipped_dates(old, fresh, date(2025, 11, 1), date(2025, 11, 30))
+    assert merged == [
+        {"date": "2025-10-30", "reason": "old gap"},
+        {"date": "2025-11-05", "reason": "updated reason"},
+    ]

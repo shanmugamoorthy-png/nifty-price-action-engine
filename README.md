@@ -180,3 +180,18 @@ V4.15 preserves the V4.14 historical-validation logic and adds direct export but
 - **Download coverage report (JSON)** exports the skipped-date coverage manifest when present.
 - Exports read the existing files from `DATA_DIR` (on Render, `/var/data` when configured) and do not call Dhan, refresh data, alter files, or change credentials.
 - Select the same expiry type, expiry sequence and timeframe used when the data was downloaded. If a file is not present for that selection, the app displays a not-found message rather than exporting a different dataset.
+
+
+# V4.16 — Append-safe monthly options history builder
+
+V4.16 changes only the historical options data-collection workflow and retains the existing V4.14 validation logic and V4.15 CSV export controls.
+
+- Select no more than 31 calendar days for each options-download batch.
+- After the CALL and PUT requests for a batch complete, rows are merged into the existing saved CE/PE files instead of replacing them. The merge key is `(timestamp, absolute strike)`, so multiple strikes at the same candle timestamp are retained, while a newly downloaded duplicate for the same contract/time updates the prior row.
+- The existing daily/offset cache remains in use. If a batch is interrupted, rerunning that date range reuses completed cached day/offset requests.
+- The skipped-date coverage manifest is merged across batches. Dates reprocessed in the current batch are refreshed in the manifest, while older skipped dates outside the batch are retained.
+- For a 12-month test, download one calendar month at a time, then select the full accumulated date range for V4.14 backtesting.
+
+**Important:** The merge is separated by the currently selected expiry type, expiry sequence and timeframe because each combination has its own saved files. Do not switch these settings midway through collecting one intended dataset. Lot sizes remain a manual backtest input and must be checked for each historical contract regime.
+
+Automated tests cover overlapping-row replacement, retention of distinct absolute strikes at the same timestamp, preservation of prior months, and cumulative skipped-date manifests. Live Dhan/Render operation still requires verification in the user's deployed service.
