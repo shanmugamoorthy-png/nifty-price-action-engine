@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.8.1", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.8.1")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.10", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.10 research test")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram")
 
 with st.sidebar:
@@ -323,7 +323,7 @@ with tabs[4]:
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")
 
 with tabs[5]:
-    st.subheader("V4.9 — NIFTY Options Buying (Lot-Based Backtest)")
+    st.subheader("V4.10 — NIFTY Options Buying (Lot-Based + Entry Filters)")
     st.write("NIFTY Spot generates the signal; the corresponding rolling NIFTY option premium is used for entry, stop, target and P&L. Bullish setup buys CE; bearish setup buys PE. This module is a research backtester only and never places orders.")
     st.warning("V4.9 supports intraday option buying only. Each trade is pinned to the absolute strike selected at entry. The downloader fetches the ATM-relative offset series needed to follow that same strike as NIFTY moves; an ATM change alone never closes the position. Dates requiring more than ±10 strikes are skipped completely and listed in a coverage warning; later dates continue downloading. Positional holding remains disabled.")
     opt_hist = load_saved()
@@ -359,6 +359,11 @@ with tabs[5]:
         option_qty = int(option_lots) * int(option_lot_size)
         st.info(f"Position quantity: {option_lots} lot(s) × {option_lot_size} units = {option_qty:,} option units. Lot size is an explicit input and must match the selected historical contract.")
         option_brokerage = st.number_input("Brokerage + fees estimate per round trip (₹ per trade)", min_value=0.0, value=40.0, step=5.0, key="v49_brokerage")
+        st.markdown("#### V4.10 combined filters")
+        st.caption("This is a separate research run. The original V4.9 backtest button and behaviour remain available for comparison.")
+        v410_confirm = st.checkbox("Require stronger signal-candle confirmation", value=True, key="v410_confirm",
+            help="CALL: green candle, body at least 50% of range, close in top 30%. PUT: red candle, body at least 50% of range, close in bottom 30%.")
+        v410_one_per_day = st.checkbox("Maximum one entry per direction per trading day", value=True, key="v410_one_day")
         if opt_start > opt_end:
             st.error("Options start date must be on or before end date.")
         elif opt_start < opt_hist.index.min().date() or opt_end > opt_hist.index.max().date():
@@ -420,7 +425,7 @@ with tabs[5]:
                             if skip_p: st.caption("PUT excluded dates: " + ", ".join(x["date"] for x in skip_p))
                     except Exception as manifest_exc:
                         st.warning(f"Could not read skipped-date manifest: {manifest_exc}")
-                if st.button("Run V4.8.1 contract-pinned option backtest", type="primary", key="v49_run_options"):
+                if st.button("Run V4.9 baseline (no extra filters) option backtest", type="primary", key="v49_run_options"):
                     try:
                         with st.spinner("Calculating causal NIFTY signals and matching option contracts..."):
                             spot_signals = add_price_action_signals(opt_hist)
@@ -454,7 +459,79 @@ with tabs[5]:
                                 "lots": int(option_lots), "lot_size": int(option_lot_size),
                             }
                     except Exception as exc:
-                        st.error(f"V4.8.1 option backtest failed: {exc}")
+                        st.error(f"V4.9 baseline option backtest failed: {exc}")
+                if st.button("Run V4.10 BOTH filters (confirmation + one trade/day)", type="primary", key="v410_run_options"):
+                    try:
+                        with st.spinner("Running V4.10 filtered option backtest..."):
+                            spot_signals = add_price_action_signals(opt_hist)
+                            call_bars = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            put_bars = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            for frame in (call_bars, put_bars):
+                                if getattr(frame.index, "tz", None) is not None:
+                                    frame.index = frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                                frame.columns = [str(c).lower() for c in frame.columns]
+                            call_bars = call_bars.loc[(call_bars.index.date >= opt_start) & (call_bars.index.date <= opt_end)]
+                            put_bars = put_bars.loc[(put_bars.index.date >= opt_start) & (put_bars.index.date <= opt_end)]
+                            spot_signals = spot_signals.loc[(spot_signals.index.date >= opt_start) & (spot_signals.index.date <= opt_end)].copy()
+                            spot_signals["buy_setup"] = spot_signals.get("choch_hl_strong_breakout_50_up", False)
+                            bearish_cols = [c for c in ["bos_down", "choch_down", "orb_down", "prev_day_break_down", "liquidity_sweep_down"] if c in spot_signals.columns]
+                            spot_signals["sell_setup"] = spot_signals[bearish_cols].fillna(False).any(axis=1) if bearish_cols else False
+                            filter_args = {
+                                "max_trades_per_day": 1 if v410_one_per_day else None,
+                                "require_candle_confirmation": bool(v410_confirm),
+                                "confirmation_body_min": 0.50,
+                                "confirmation_close_edge": 0.70,
+                            }
+                            call_trades, call_metrics = run_option_buying_backtest(
+                                spot_signals, call_bars, "CALL", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, **filter_args)
+                            put_trades, put_metrics = run_option_buying_backtest(
+                                spot_signals, put_bars, "PUT", premium_stop, premium_target,
+                                quantity=int(option_qty), slippage_per_side=option_slippage,
+                                brokerage_round_trip=option_brokerage, **filter_args)
+                            st.session_state["v410_option_results"] = {
+                                "call": (call_trades, call_metrics), "put": (put_trades, put_metrics),
+                                "start": opt_start, "end": opt_end, "expiry": f"{opt_expiry_flag} / code {opt_expiry_code}",
+                                "timeframe": opt_interval, "quantity": int(option_qty),
+                                "lots": int(option_lots), "lot_size": int(option_lot_size),
+                                "confirmation": bool(v410_confirm), "one_per_day": bool(v410_one_per_day),
+                            }
+                    except Exception as exc:
+                        st.error(f"V4.10 filtered option backtest failed: {exc}")
+            if "v410_option_results" in st.session_state:
+                vr10 = st.session_state["v410_option_results"]
+                st.markdown("### V4.10 filtered results")
+                st.caption(f"{vr10['start']} to {vr10['end']} • {vr10['expiry']} • {vr10['timeframe']}m • {vr10['lots']} lot(s) × {vr10['lot_size']} = {vr10['quantity']} units. Confirmation: {vr10['confirmation']}; one trade/day/direction: {vr10['one_per_day']}.")
+                combined_trades = []
+                for label, key in (("BUY CE", "call"), ("BUY PE", "put")):
+                    trades10, metrics10 = vr10[key]
+                    st.markdown(f"#### {label}")
+                    mcols10 = st.columns(4)
+                    for col, metric_name in zip(mcols10, list(metrics10.keys())[:4]):
+                        col.metric(metric_name, metrics10[metric_name])
+                    if not trades10.empty:
+                        combined_trades.append(trades10)
+                        st.dataframe(trades10, use_container_width=True)
+                        st.download_button(f"Download V4.10 {key.upper()} CSV", trades10.to_csv(index=False).encode("utf-8"),
+                            f"v410_nifty_{key}_option_trades.csv", "text/csv", key=f"v410_download_{key}")
+                if combined_trades:
+                    all10 = pd.concat(combined_trades, ignore_index=True).sort_values("exit_time")
+                    net10 = float(all10["net_pnl_inr"].sum())
+                    wins10 = int((all10["net_pnl_inr"] > 0).sum())
+                    st.markdown("#### Comparison with your uploaded V4.9 baseline")
+                    compare10 = pd.DataFrame([
+                        {"Metric": "Trades", "Uploaded baseline": 94, "V4.10 filtered": len(all10)},
+                        {"Metric": "Win rate", "Uploaded baseline": "35.11%", "V4.10 filtered": f"{(all10['net_pnl_inr'] > 0).mean()*100:.2f}%"},
+                        {"Metric": "Gross P&L", "Uploaded baseline": "-₹5,018.00", "V4.10 filtered": f"₹{all10['gross_pnl_inr'].sum():,.2f}"},
+                        {"Metric": "Slippage", "Uploaded baseline": "₹6,110.00", "V4.10 filtered": f"₹{all10['slippage_inr'].sum():,.2f}"},
+                        {"Metric": "Brokerage", "Uploaded baseline": "₹3,760.00", "V4.10 filtered": f"₹{all10['brokerage_inr'].sum():,.2f}"},
+                        {"Metric": "Net P&L", "Uploaded baseline": "-₹14,888.00", "V4.10 filtered": f"₹{net10:,.2f}"},
+                    ])
+                    st.dataframe(compare10, hide_index=True, use_container_width=True)
+                    st.caption("Baseline figures are calculated from the two CSVs uploaded on 18 Nov 2026. Compare only when date coverage, expiry, timeframe, lot size and costs match. The baseline has an excluded 6 Nov session.")
+                else:
+                    st.info("V4.10 generated no completed trades with the selected filters. This is a valid result; do not relax filters solely to force trades.")
             if "v48_option_results" in st.session_state:
                 vr = st.session_state["v48_option_results"]
                 st.markdown(f"### Results: {vr['start']} to {vr['end']} • {vr['expiry']} • {vr['timeframe']}m")

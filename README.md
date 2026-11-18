@@ -105,3 +105,16 @@ If the intraday ATM strike range on a date exceeds the Dhan near-expiry ATM±10 
 - Default lot size is 65 as an editable starting value for the current test contract. **Confirm the lot size for each historical expiry from the applicable Dhan/NSE contract metadata.** The app does not silently assume that one lot size applies to every expiry.
 - Brokerage + fees is an editable round-trip estimate per completed trade.
 - This is a historical research backtester only; it does not place orders.
+
+
+# V4.10 — Combined options-entry filter experiment
+
+V4.10 preserves the V4.9 contract-pinned, lot-based options backtester and adds a separate filtered run. The original unfiltered baseline run remains available.
+
+- Strong signal-candle confirmation (optional): CALL requires a bullish candle; PUT requires a bearish candle; absolute candle body must be at least 50% of the candle range; close must be in the top 30% for CALL or bottom 30% for PUT. This is evaluated on the completed signal candle before the next-candle option entry.
+- Maximum one entry per option direction per trading day (optional): the CALL and PUT engines each allow at most one entry per date.
+- Both filters are enabled by default in the V4.10 filtered run.
+- The app compares V4.10 results with the uploaded 18-session V4.9 CSV baseline: 94 trades, 35.11% win rate, gross P&L -₹5,018, slippage ₹6,110, brokerage ₹3,760, net P&L -₹14,888. The baseline excludes 6 Nov 2026.
+- Comparison is meaningful only when date range, expiry, timeframe, lot size, slippage and brokerage match. The reference baseline is a historical uploaded sample, not a forecast.
+
+The V4.10 filters are research hypotheses, not evidence of profitability. Run against the same saved Dhan option datasets first; do not place live orders based on these results.

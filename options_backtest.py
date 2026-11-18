@@ -22,7 +22,9 @@ def _metrics(trades, quantity, brokerage):
 
 def run_option_buying_backtest(spot_signals, option_bars, option_type, premium_stop, premium_target,
                                quantity=1, slippage_per_side=0.5, brokerage_round_trip=20.0,
-                               strike_offset=0, square_off_time="15:15"):
+                               strike_offset=0, square_off_time="15:15",
+                               max_trades_per_day=None, require_candle_confirmation=False,
+                               confirmation_body_min=0.50, confirmation_close_edge=0.70):
     """Buy next-bar open of the absolute ATM strike selected at signal time.
 
     Later candles are looked up by the same absolute strike, even when ATM moves.
@@ -57,9 +59,21 @@ def run_option_buying_backtest(spot_signals, option_bars, option_type, premium_s
     times=sorted(x.timestamp.unique())
     spot=spot_signals.copy().sort_index()
     spot=spot.loc[spot[signal_col].fillna(False).astype(bool)]
+    # Optional V4.10 filters. Confirmation is evaluated on the completed signal
+    # candle, before the next-candle option entry, so it does not use future data.
+    if require_candle_confirmation and not spot.empty:
+        sig = spot_signals.reindex(spot.index)
+        candle_range = (pd.to_numeric(sig["high"], errors="coerce") - pd.to_numeric(sig["low"], errors="coerce")).replace(0, pd.NA)
+        body_ratio = (pd.to_numeric(sig["close"], errors="coerce") - pd.to_numeric(sig["open"], errors="coerce")).abs() / candle_range
+        close_location = (pd.to_numeric(sig["close"], errors="coerce") - pd.to_numeric(sig["low"], errors="coerce")) / candle_range
+        if option_type == "CALL":
+            confirm = (sig["close"] > sig["open"]) & (body_ratio >= confirmation_body_min) & (close_location >= confirmation_close_edge)
+        else:
+            confirm = (sig["close"] < sig["open"]) & (body_ratio >= confirmation_body_min) & (close_location <= (1.0-confirmation_close_edge))
+        spot = spot.loc[confirm.fillna(False)]
     signal_times=set(spot.index)
     if not signal_times: return pd.DataFrame(),_metrics(pd.DataFrame(),quantity,brokerage_round_trip)[0]
-    trades=[]; pos=None; last_ts_by_strike={}
+    trades=[]; pos=None; last_ts_by_strike={}; entered_dates=set()
     for i,ts in enumerate(times):
         ts=pd.Timestamp(ts)
         # Manage the already-open absolute strike first.
@@ -93,6 +107,8 @@ def run_option_buying_backtest(spot_signals, option_bars, option_type, premium_s
         if pos is None and i>0:
             prev_ts=pd.Timestamp(times[i-1])
             if prev_ts in signal_times and ts.date()==prev_ts.date() and ts.strftime("%H:%M")<"15:00":
+                if max_trades_per_day is not None and prev_ts.date() in entered_dates:
+                    continue
                 # ATM series is the row whose spot-derived ATM equals its actual strike.
                 spot_close=float(spot_signals.loc[prev_ts,"close"])
                 atm_strike=atm_by_time.get(prev_ts)
@@ -110,6 +126,7 @@ def run_option_buying_backtest(spot_signals, option_bars, option_type, premium_s
                          "sl":fill-premium_stop,"target":fill+premium_target,
                          "spot_at_signal":spot_close,"signal_reason":str(spot_signals.loc[prev_ts].get("signal_reason",""))}
                     last_ts_by_strike[pos["strike"]]=ts
+                    entered_dates.add(prev_ts.date())
     if pos is not None:
         last=last_ts_by_strike.get(pos["strike"])
         if last is not None:

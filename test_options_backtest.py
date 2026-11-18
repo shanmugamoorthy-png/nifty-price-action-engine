@@ -62,3 +62,32 @@ class LotSizingTests(unittest.TestCase):
         self.assertEqual(int(trades.iloc[0]['quantity_units']),65)
         self.assertAlmostEqual(metrics['Gross P&L ₹'],1007.5)
         self.assertAlmostEqual(metrics['Brokerage ₹'],40.0)
+
+class V410FilterTests(unittest.TestCase):
+    def test_max_one_entry_per_day(self):
+        idx=pd.date_range('2025-01-02 09:15',periods=7,freq='5min')
+        spot=pd.DataFrame({'buy_setup':[False,True,False,True,False,False,False],
+                           'sell_setup':[False]*7,'open':[100]*7,'high':[102]*7,
+                           'low':[98]*7,'close':[100,101,100,101,100,100,100],
+                           'signal_reason':['']*7},index=idx)
+        opt=pd.DataFrame({'open':[100,101,102,103,104,105,106],
+                          'high':[101,102,103,104,105,106,107],
+                          'low':[99,100,101,102,103,104,105],
+                          'close':[100,101,102,103,104,105,106],
+                          'strike':[100]*7,'spot':[100]*7,'offset':[0]*7},index=idx)
+        trades,_=run_option_buying_backtest(spot,opt,'CALL',2,100,quantity=1,
+            slippage_per_side=0,brokerage_round_trip=0,max_trades_per_day=1)
+        self.assertLessEqual(len(trades),1)
+
+    def test_bullish_candle_confirmation_filters_weak_signal(self):
+        idx=pd.date_range('2025-01-02 09:15',periods=4,freq='5min')
+        spot=pd.DataFrame({'buy_setup':[False,True,False,False], 'sell_setup':[False]*4,
+                           'open':[100,100,100,100],'high':[102,110,102,102],
+                           'low':[98,90,98,98],'close':[100,101,100,100],
+                           'signal_reason':['']*4},index=idx)
+        opt=pd.DataFrame({'open':[100,101,102,103],'high':[101,102,103,104],
+                          'low':[99,100,101,102],'close':[100,101,102,103],
+                          'strike':[100]*4,'spot':[100]*4,'offset':[0]*4},index=idx)
+        trades,_=run_option_buying_backtest(spot,opt,'CALL',2,100,quantity=1,
+            slippage_per_side=0,brokerage_round_trip=0,require_candle_confirmation=True)
+        self.assertTrue(trades.empty)
