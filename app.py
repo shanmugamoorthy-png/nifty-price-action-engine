@@ -13,8 +13,8 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.13", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.13 breakout-retest test")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.14", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.14 historical validation")
 st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research")
 
 with st.sidebar:
@@ -695,6 +695,71 @@ with tabs[5]:
                 else:
                     st.info("V4.13 generated no completed trades. Do not loosen the rules simply to force trades.")
                 st.caption("Compare with V4.11 60% no-volume control only when dates, expiry, timeframe, lot size, premium stop/target, slippage and brokerage are identical. Historical test only; no orders are placed.")
+            st.markdown("#### V4.14 — Extended historical validation (V4.13 rules unchanged)")
+            st.caption("Runs the same breakout + retest entry logic over a longer saved history, then separates earlier in-sample trades from later out-of-sample trades. No parameter optimisation is performed.")
+            default_oos = opt_start + timedelta(days=max(30, (opt_end-opt_start).days*7//10))
+            v414_oos_start = st.date_input("V4.14 out-of-sample start date", value=min(default_oos,opt_end), min_value=opt_start, max_value=opt_end, key="v414_oos_start")
+            st.info("For meaningful validation, first download at least 6–12 months of NIFTY Spot and matching option history. Use the same historical expiry lot size; a single lot-size input cannot automatically adjust across historical expiry changes.")
+            if st.button("Run V4.14 extended validation", type="primary", key="v414_run"):
+                try:
+                    with st.spinner("Running unchanged V4.13 signals across the selected historical period..."):
+                        spot14 = add_price_action_signals(opt_hist)
+                        spot14 = add_breakout_retest_signals(spot14, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                        spot14 = spot14.loc[(spot14.index.date >= opt_start) & (spot14.index.date <= opt_end)].copy()
+                        spot14["buy_setup"] = spot14["v413_buy_retest"].fillna(False)
+                        spot14["sell_setup"] = spot14["v413_sell_retest"].fillna(False)
+                        spot14["signal_reason"] = ""
+                        spot14.loc[spot14["buy_setup"], "signal_reason"] = "v413_bullish_breakout_retest_60"
+                        spot14.loc[spot14["sell_setup"], "signal_reason"] = "v413_bearish_breakout_retest_60"
+                        c14 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        p14 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        for frame in (c14,p14):
+                            if getattr(frame.index,"tz",None) is not None:
+                                frame.index=frame.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                            frame.columns=[str(c).lower() for c in frame.columns]
+                        c14=c14.loc[(c14.index.date>=opt_start)&(c14.index.date<=opt_end)]
+                        p14=p14.loc[(p14.index.date>=opt_start)&(p14.index.date<=opt_end)]
+                        tc14,mc14=run_option_buying_backtest(spot14,c14,"CALL",premium_stop,premium_target,quantity=int(option_qty),slippage_per_side=option_slippage,brokerage_round_trip=option_brokerage,max_trades_per_day=1)
+                        tp14,mp14=run_option_buying_backtest(spot14,p14,"PUT",premium_stop,premium_target,quantity=int(option_qty),slippage_per_side=option_slippage,brokerage_round_trip=option_brokerage,max_trades_per_day=1)
+                        trades14=pd.concat([t.assign(option_side=side) for t,side in [(tc14,"CALL"),(tp14,"PUT")] if not t.empty],ignore_index=True) if (not tc14.empty or not tp14.empty) else pd.DataFrame()
+                        if not trades14.empty:
+                            trades14["entry_time"]=pd.to_datetime(trades14["entry_time"])
+                            trades14["exit_time"]=pd.to_datetime(trades14["exit_time"])
+                            trades14["period"]=trades14["entry_time"].dt.date.map(lambda d:"Out-of-sample" if d>=v414_oos_start else "In-sample")
+                        st.session_state["v414_results"]={"trades":trades14,"start":opt_start,"end":opt_end,"oos_start":v414_oos_start,"expiry":f"{opt_expiry_flag}/{opt_expiry_code}","timeframe":opt_interval,"lots":int(option_lots),"lot_size":int(option_lot_size),"quantity":int(option_qty),"stop":float(premium_stop),"target":float(premium_target),"slippage":float(option_slippage),"brokerage":float(option_brokerage)}
+                except Exception as exc:
+                    st.error(f"V4.14 validation failed: {exc}")
+            if "v414_results" in st.session_state:
+                r14=st.session_state["v414_results"]; t14=r14["trades"]
+                st.markdown("### V4.14 chronological validation results")
+                st.caption(f"{r14['start']} to {r14['end']} • OOS from {r14['oos_start']} • {r14['expiry']} • {r14['timeframe']}m • {r14['lots']} lot(s) × {r14['lot_size']} = {r14['quantity']} units")
+                def _v414_metrics(frame):
+                    if frame.empty: return {"Trades":0,"Win rate":"N/A","Gross P&L ₹":0.0,"Slippage ₹":0.0,"Brokerage ₹":0.0,"Net P&L ₹":0.0,"Max drawdown ₹":0.0,"Max losing streak":0}
+                    ordered=frame.sort_values("exit_time").copy()
+                    net= pd.to_numeric(ordered["net_pnl_inr"],errors="coerce").fillna(0)
+                    equity=net.cumsum(); dd=equity-equity.cummax()
+                    streak=cur=0
+                    for val in net:
+                        cur=cur+1 if val<0 else 0; streak=max(streak,cur)
+                    return {"Trades":len(ordered),"Win rate":f"{(net>0).mean()*100:.2f}%","Gross P&L ₹":ordered["gross_pnl_inr"].sum(),"Slippage ₹":ordered["slippage_inr"].sum(),"Brokerage ₹":ordered["brokerage_inr"].sum(),"Net P&L ₹":net.sum(),"Max drawdown ₹":dd.min(),"Max losing streak":streak}
+                for period14 in ("In-sample","Out-of-sample"):
+                    st.markdown(f"#### {period14}")
+                    part14=t14[t14["period"]==period14] if not t14.empty else pd.DataFrame()
+                    st.dataframe(pd.DataFrame([_v414_metrics(part14)]),hide_index=True,use_container_width=True)
+                    if not part14.empty:
+                        for side14 in ("CALL","PUT"):
+                            sideframe=part14[part14["option_side"]==side14]
+                            st.caption(f"{side14}: {len(sideframe)} trades • Net ₹{sideframe['net_pnl_inr'].sum():,.2f}")
+                if not t14.empty:
+                    t14["month"]=t14["entry_time"].dt.to_period("M").astype(str)
+                    monthly14=t14.groupby(["period","month"],as_index=False).agg(trades=("net_pnl_inr","size"),net_pnl_inr=("net_pnl_inr","sum"),gross_pnl_inr=("gross_pnl_inr","sum"),slippage_inr=("slippage_inr","sum"),brokerage_inr=("brokerage_inr","sum"))
+                    st.markdown("#### Monthly performance")
+                    st.dataframe(monthly14,use_container_width=True)
+                    st.download_button("Download V4.14 monthly summary CSV",monthly14.to_csv(index=False).encode("utf-8"),"v414_monthly_summary.csv","text/csv",key="v414_monthly_dl")
+                    st.download_button("Download V4.14 all trades CSV",t14.to_csv(index=False).encode("utf-8"),"v414_all_trades.csv","text/csv",key="v414_trades_dl")
+                else:
+                    st.warning("No completed V4.14 trades in the selected period. This is not evidence of profitability.")
+                st.caption("The out-of-sample period is the decisive validation. Do not tune settings using OOS results and then report the same period as an independent test.")
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
                 st.markdown("### V4.12 volume-confirmed results")

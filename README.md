@@ -157,3 +157,16 @@ V4.13 preserves the V4.9 baseline, V4.10 combined filters, V4.11 confirmation-st
 - Retest signals are a new research hypothesis and may materially reduce trade count. No live orders are placed.
 
 Compare V4.13 against V4.11's 60% no-volume control only with identical date coverage, expiry, timeframe, lot size, premium stop/target, slippage and brokerage. The code tests include synthetic bullish and bearish retest cases; live Dhan dataset results must be generated in the deployed app.
+
+
+# V4.14 — Extended historical validation of V4.13 (entry logic frozen)
+
+V4.14 preserves all prior strategy versions and adds chronological in-sample / out-of-sample reporting for the unchanged V4.13 breakout-retest option strategy.
+
+- Entry rules remain frozen: 60% directional candle body, top/bottom 30% close location, structure breakout followed by a later retest, 12 subsequent 5-minute candle expiry, next option candle entry, maximum one CALL and one PUT per day.
+- No volume filter and no parameter optimisation.
+- Uses selected saved NIFTY Spot history and matching fixed-strike option premium history.
+- User selects the out-of-sample start date. Trades are classified by entry date; earlier trades are in-sample, later trades are out-of-sample.
+- Reports separate period summaries, CALL/PUT net P&L, monthly results, drawdown and losing streak, with CSV downloads.
+- For credible validation, download at least 6–12 months of matching Spot and option history before running. Verify the historical contract lot size. A single manual lot-size input applies to all selected trades and does not automatically account for historical lot-size changes.
+- Use out-of-sample results as the main evidence. Do not repeatedly tune on the same out-of-sample period.
