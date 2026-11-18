@@ -46,3 +46,19 @@ class OptionBacktestTests(unittest.TestCase):
         self.assertTrue(trades.empty); self.assertEqual(metrics['Trades'],0)
 
 if __name__=='__main__': unittest.main()
+
+class LotSizingTests(unittest.TestCase):
+    def test_pnl_scales_with_contract_quantity(self):
+        idx=pd.date_range('2025-01-02 09:15',periods=4,freq='5min')
+        spot=pd.DataFrame({'buy_setup':[False,True,False,False], 'sell_setup':[False]*4,
+                           'close':[24000,24020,24030,24040], 'signal_reason':['','bull','','']},index=idx)
+        opt=pd.DataFrame({'open':[100,101,102,103], 'high':[101,103,103,125],
+                          'low':[99,100,101,102], 'close':[100,102,120,103],
+                          'strike':[24000]*4,'spot':[24000,24020,24030,24040],
+                          'offset':[0]*4},index=idx)
+        trades,metrics=run_option_buying_backtest(spot,opt,'CALL',10,15,quantity=65,
+                                                   slippage_per_side=0.5,brokerage_round_trip=40)
+        self.assertEqual(len(trades),1)
+        self.assertEqual(int(trades.iloc[0]['quantity_units']),65)
+        self.assertAlmostEqual(metrics['Gross P&L ₹'],1007.5)
+        self.assertAlmostEqual(metrics['Brokerage ₹'],40.0)

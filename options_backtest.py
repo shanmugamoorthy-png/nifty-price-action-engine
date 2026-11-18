@@ -116,6 +116,8 @@ def run_option_buying_backtest(spot_signals, option_bars, option_type, premium_s
             rr=by_key.get((last,pos["strike"]))
             if rr is not None: trades.append(_close(pos,last,float(rr.close),"End of available session data",quantity,slippage_per_side,brokerage_round_trip))
     tdf=pd.DataFrame(trades)
+    if not tdf.empty:
+        tdf["quantity_units"] = int(quantity)
     metrics,tdf=_metrics(tdf,quantity,brokerage_round_trip)
     return tdf,metrics
 

@@ -97,3 +97,11 @@ Run `pytest -q` and `python -m unittest discover -s tests -v`. The test suite in
 ## V4.8.1 unsupported-date handling
 
 If the intraday ATM strike range on a date exceeds the Dhan near-expiry ATM±10 coverage, the downloader now excludes that entire date for the relevant option type, records the date and reason in a persistent JSON manifest, and continues with later dates. It does not retain partial ATM candles from that unsupported date. The app displays the skipped CALL and PUT dates and warns that the resulting backtest covers only the remaining complete sessions.
+
+## V4.9 lot-based NIFTY options buying
+
+- Choose number of lots and contract lot size separately.
+- Total quantity = lots × lot size; all premium P&L and slippage calculations use total option units.
+- Default lot size is 65 as an editable starting value for the current test contract. **Confirm the lot size for each historical expiry from the applicable Dhan/NSE contract metadata.** The app does not silently assume that one lot size applies to every expiry.
+- Brokerage + fees is an editable round-trip estimate per completed trade.
+- This is a historical research backtester only; it does not place orders.

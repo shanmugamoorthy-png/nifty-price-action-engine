@@ -323,9 +323,9 @@ with tabs[4]:
     st.info("Entry alerts are deduplicated by completed candle timestamp. Exit alerts are not yet simulated as live broker-position exits; no orders are placed.")
 
 with tabs[5]:
-    st.subheader("V4.8.1 — NIFTY Options Buying Backtest")
+    st.subheader("V4.9 — NIFTY Options Buying (Lot-Based Backtest)")
     st.write("NIFTY Spot generates the signal; the corresponding rolling NIFTY option premium is used for entry, stop, target and P&L. Bullish setup buys CE; bearish setup buys PE. This module is a research backtester only and never places orders.")
-    st.warning("V4.8.1 supports intraday option buying only. Each trade is pinned to the absolute strike selected at entry. The downloader fetches the ATM-relative offset series needed to follow that same strike as NIFTY moves; an ATM change alone never closes the position. Dates requiring more than ±10 strikes are skipped completely and listed in a coverage warning; later dates continue downloading. Positional holding remains disabled.")
+    st.warning("V4.9 supports intraday option buying only. Each trade is pinned to the absolute strike selected at entry. The downloader fetches the ATM-relative offset series needed to follow that same strike as NIFTY moves; an ATM change alone never closes the position. Dates requiring more than ±10 strikes are skipped completely and listed in a coverage warning; later dates continue downloading. Positional holding remains disabled.")
     opt_hist = load_saved()
     if opt_hist is None or opt_hist.empty:
         st.error("Download the NIFTY Spot 5-minute history first. V4.8.1 uses it to generate bullish and bearish signals.")
@@ -348,14 +348,17 @@ with tabs[5]:
         opt_strike = st.selectbox("Strike selection", ["ATM"], index=0, key="v48_strike")
         pc1, pc2, pc3, pc4 = st.columns(4)
         with pc1:
-            premium_stop = st.number_input("Option premium stop (₹ points)", min_value=0.05, value=20.0, step=1.0, key="v48_premium_stop")
+            premium_stop = st.number_input("Option premium stop (₹ points)", min_value=0.05, value=20.0, step=1.0, key="v49_premium_stop")
         with pc2:
-            premium_target = st.number_input("Option premium target (₹ points)", min_value=0.05, value=40.0, step=1.0, key="v48_premium_target")
+            premium_target = st.number_input("Option premium target (₹ points)", min_value=0.05, value=40.0, step=1.0, key="v49_premium_target")
         with pc3:
-            option_qty = st.number_input("Quantity (units, not lots)", min_value=1, value=1, step=1, key="v48_qty")
+            option_lots = st.number_input("Number of lots", min_value=1, value=1, step=1, key="v49_lots")
         with pc4:
-            option_slippage = st.number_input("Premium slippage per side (₹)", min_value=0.0, value=0.50, step=0.05, key="v48_slippage")
-        option_brokerage = st.number_input("Brokerage + fees estimate per round trip (₹)", min_value=0.0, value=40.0, step=5.0, key="v48_brokerage")
+            option_slippage = st.number_input("Premium slippage per unit per side (₹)", min_value=0.0, value=0.50, step=0.05, key="v49_slippage")
+        option_lot_size = st.number_input("Contract lot size (units per lot)", min_value=1, value=65, step=1, key="v49_lot_size", help="Confirm the historical contract lot size for the selected expiry from Dhan/NSE contract metadata. Do not assume 65 for every historical expiry.")
+        option_qty = int(option_lots) * int(option_lot_size)
+        st.info(f"Position quantity: {option_lots} lot(s) × {option_lot_size} units = {option_qty:,} option units. Lot size is an explicit input and must match the selected historical contract.")
+        option_brokerage = st.number_input("Brokerage + fees estimate per round trip (₹ per trade)", min_value=0.0, value=40.0, step=5.0, key="v49_brokerage")
         if opt_start > opt_end:
             st.error("Options start date must be on or before end date.")
         elif opt_start < opt_hist.index.min().date() or opt_end > opt_hist.index.max().date():
@@ -363,7 +366,7 @@ with tabs[5]:
         else:
             call_file = os.path.join(DATA_DIR, f"nifty_options_v48_call_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
             put_file = os.path.join(DATA_DIR, f"nifty_options_v48_put_{opt_expiry_flag.lower()}_{opt_expiry_code}_{opt_interval}m.csv")
-            fetch_options = st.button("Download / refresh fixed-strike Dhan option premiums (CE + PE)", type="primary", key="v48_fetch_options")
+            fetch_options = st.button("Download / refresh fixed-strike Dhan option premiums (CE + PE)", type="primary", key="v49_fetch_options")
             if fetch_options:
                 try:
                     opt_client = get_client()
@@ -417,7 +420,7 @@ with tabs[5]:
                             if skip_p: st.caption("PUT excluded dates: " + ", ".join(x["date"] for x in skip_p))
                     except Exception as manifest_exc:
                         st.warning(f"Could not read skipped-date manifest: {manifest_exc}")
-                if st.button("Run V4.8.1 contract-pinned option backtest", type="primary", key="v48_run_options"):
+                if st.button("Run V4.8.1 contract-pinned option backtest", type="primary", key="v49_run_options"):
                     try:
                         with st.spinner("Calculating causal NIFTY signals and matching option contracts..."):
                             spot_signals = add_price_action_signals(opt_hist)
@@ -448,13 +451,14 @@ with tabs[5]:
                                 "call": (call_trades, call_metrics), "put": (put_trades, put_metrics),
                                 "start": opt_start, "end": opt_end, "expiry": f"{opt_expiry_flag} / code {opt_expiry_code}",
                                 "timeframe": opt_interval, "quantity": int(option_qty),
+                                "lots": int(option_lots), "lot_size": int(option_lot_size),
                             }
                     except Exception as exc:
                         st.error(f"V4.8.1 option backtest failed: {exc}")
             if "v48_option_results" in st.session_state:
                 vr = st.session_state["v48_option_results"]
                 st.markdown(f"### Results: {vr['start']} to {vr['end']} • {vr['expiry']} • {vr['timeframe']}m")
-                st.caption(f"Quantity: {vr['quantity']} units per trade. P&L is in INR from actual option premium OHLC, less simulated slippage and entered brokerage/fees estimate.")
+                st.caption(f"Position size: {vr['lots']} lot(s) × {vr['lot_size']} units = {vr['quantity']} units per trade. P&L is in INR from actual option premium OHLC, less simulated slippage and entered brokerage/fees estimate.")
                 for label, key in (("BUY CE — bullish NIFTY signals", "call"), ("BUY PE — bearish NIFTY signals", "put")):
                     trades, metrics = vr[key]
                     st.markdown(f"#### {label}")
@@ -469,4 +473,4 @@ with tabs[5]:
                         st.dataframe(trades, use_container_width=True)
                     st.download_button(f"Download {key.upper()} option trades CSV", trades.to_csv(index=False).encode("utf-8"),
                         f"v48_nifty_{key.lower()}_option_trades.csv", "text/csv", key=f"v48_download_{key}")
-                st.info("V4.8.1 execution model: NIFTY signal confirmed at candle close; the ATM absolute strike at that signal is selected and bought at the next option candle open. Subsequent bars are matched by the same absolute strike across ATM-relative offset series. A change in ATM does not close the trade. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events. Premium stop/target use option OHLC; if both touch in one candle, stop is assumed first. Intraday only; square-off at 15:15. No orders are placed.")
+                st.info("V4.9 execution model: NIFTY signal confirmed at candle close; the ATM absolute strike at that signal is selected and bought at the next option candle open. Subsequent bars are matched by the same absolute strike across ATM-relative offset series. A change in ATM does not close the trade. CE uses the bullish 50% Strong Breakout signal. PE uses bearish BOS/CHoCH, ORB, previous-day-break and liquidity-sweep events. Premium stop/target use option OHLC; if both touch in one candle, stop is assumed first. Intraday only; square-off at 15:15. No orders are placed.")
