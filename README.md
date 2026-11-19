@@ -204,8 +204,12 @@ The report includes row counts, first/last timestamps, unique dates/timestamps, 
 
 This is a structural/coverage diagnostic, not proof that every contract was tradable or that the historical lot size is correct. Review the report before running an extended backtest.
 
-## V4.18 — Historical lot-size-aware validation
+## V4.19 — Historical lot-size-aware validation
 
 V4.18 adds a separate extended backtest that applies a manually verified lot-size schedule by effective date. Enter non-overlapping `start_date`, `end_date`, and `lot_size` rows that cover the entire selected test period. The app rejects missing, overlapping, non-positive, or incomplete schedules. It then runs the unchanged V4.13 breakout-retest signals one trading day at a time using that day's configured lot size. CALL and PUT results are reported separately for in-sample and out-of-sample periods, with trade-level lot size and quantity included in the export.
 
 The application does **not** infer historical lot sizes or contract expiry lot sizes from the option candle CSV. Users must verify each effective date and lot size against official NSE contract specifications or broker contract metadata before running. If lot size changed during the test period, enter a new schedule row at the correct effective date. This is a research backtest, not a broker order system.
+
+## V4.19 — Monthly signal-to-option diagnostics
+
+V4.19 adds a read-only diagnostic on the Historical/Options backtest page. It uses the existing saved NIFTY Spot and CALL/PUT premium CSV files; it makes no Dhan API requests and does not modify saved data or V4.13 strategy rules. For each calendar month in the selected date range it reports Spot candle/trading-date counts, V4.13 CALL/PUT signal counts, option row/date/timestamp/strike counts, offset=0 ATM rows, signal timestamps with an ATM contract at the signal, and whether the same absolute strike exists on the next option candle. Download the compact monthly diagnostic CSV from the page. This separates (a) no strategy signal, (b) missing ATM contract at signal time, and (c) missing next-candle same-strike entry data. It is an eligibility diagnostic, not a trade simulator or profitability claim.

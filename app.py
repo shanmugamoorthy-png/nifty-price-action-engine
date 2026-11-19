@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.18", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.18 historical lot-size validation")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.19", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.19 historical signal diagnostics")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.19 monthly signal-to-option diagnostics")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -924,6 +924,42 @@ with tabs[5]:
                 else:
                     st.warning("No completed V4.18 trades in the selected period.")
                 st.caption("V4.18 applies the user-entered lot size by effective date. It does not automatically verify the schedule against NSE records. Verify official contract specifications before relying on INR results. Research only; no orders are placed.")
+
+            st.markdown("#### V4.19 — Monthly signal and option-entry diagnostics")
+            st.caption("Read-only diagnostics. Counts unchanged V4.13 Spot signals by month, then checks whether each signal has an offset=0 ATM option candle and whether the same absolute strike exists on the next option candle. It does not alter strategy rules, saved data, or trades.")
+            st.info("Run this if older months appear in your saved CSVs but are missing from the V4.18 trade export. No Dhan API requests are made.")
+            if st.button("Run V4.19 monthly signal-to-option diagnostics", type="primary", key="v419_run_diagnostics"):
+                try:
+                    from historical_diagnostics import build_monthly_historical_diagnostic
+                    with st.spinner("Counting monthly Spot signals and checking option entry matches..."):
+                        spot19 = add_price_action_signals(opt_hist)
+                        spot19 = add_breakout_retest_signals(spot19, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                        call19 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        put19 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        diag19 = build_monthly_historical_diagnostic(spot19, call19, put19, opt_start, opt_end)
+                        st.session_state["v419_diagnostic"] = {"table": diag19, "start": opt_start, "end": opt_end}
+                except Exception as exc:
+                    st.error(f"V4.19 diagnostics failed: {exc}")
+            if "v419_diagnostic" in st.session_state:
+                d19 = st.session_state["v419_diagnostic"]
+                monthly19 = d19["table"]
+                st.markdown("### V4.19 monthly diagnostic results")
+                st.caption(f"{d19['start']} to {d19['end']} • existing saved files only • no strategy or trade execution")
+                st.dataframe(monthly19, hide_index=True, use_container_width=True)
+                if not monthly19.empty:
+                    totals19 = {
+                        "Months checked": len(monthly19),
+                        "Spot candles": int(monthly19["spot_rows_5m"].sum()),
+                        "Spot trading dates": int(monthly19["spot_trading_dates"].sum()),
+                        "CALL signals": int(monthly19["CALL_spot_signals"].sum()),
+                        "CALL next-candle same-strike matches": int(monthly19["CALL_signals_with_next_candle_same_strike"].sum()),
+                        "PUT signals": int(monthly19["PUT_spot_signals"].sum()),
+                        "PUT next-candle same-strike matches": int(monthly19["PUT_signals_with_next_candle_same_strike"].sum()),
+                    }
+                    st.markdown("#### Diagnostic totals")
+                    st.dataframe(pd.DataFrame([totals19]), hide_index=True, use_container_width=True)
+                    st.download_button("Download V4.19 monthly diagnostic CSV", monthly19.to_csv(index=False).encode("utf-8"), "v419_monthly_signal_option_diagnostics.csv", "text/csv", key="v419_monthly_csv")
+                st.caption("Interpretation: zero Spot signals means the unchanged V4.13 rules did not trigger that month. Signals without an ATM-at-signal match indicate missing offset=0 contract data. ATM matches without a next-candle same-strike match indicate an entry-candle/strike coverage problem. This report counts eligibility; it does not prove fills or profitability.")
 
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
