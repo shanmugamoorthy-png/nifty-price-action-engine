@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.19", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.20 full-history diagnostics")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal-to-option diagnostics")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.21", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.21 trade reconciliation")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.21 trade reconciliation")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -978,6 +978,56 @@ with tabs[5]:
                     st.caption("Zero Spot signals means unchanged V4.13 rules did not trigger that month. Signals without an ATM offset=0 match indicate missing ATM data. ATM matches without a next-candle same-strike match indicate entry coverage issues. Monthly option-row counts confirm whether the full saved option CSV is being read.")
             except Exception as exc:
                 st.error(f"V4.20 diagnostics failed while loading saved files: {exc}")
+
+            st.markdown("#### V4.21 — Monthly signal-to-trade reconciliation")
+            st.caption("Compares V4.13 signals, ATM/next-bar strike availability, and actual entries from the same production option backtester with the V4.18 one-entry-per-direction-per-day rule. Read-only: no Dhan requests and no saved data changes.")
+            try:
+                if "v420_diagnostic" in st.session_state:
+                    v421_default_start = st.session_state["v420_diagnostic"]["start"]
+                    v421_default_end = st.session_state["v420_diagnostic"]["end"]
+                else:
+                    v421_default_start = opt_start
+                    v421_default_end = opt_end
+                v421c1, v421c2 = st.columns(2)
+                with v421c1:
+                    v421_start = st.date_input("V4.21 reconciliation start", value=v421_default_start, key="v421_start")
+                with v421c2:
+                    v421_end = st.date_input("V4.21 reconciliation end", value=v421_default_end, key="v421_end")
+                if st.button("Run V4.21 monthly trade reconciliation", type="primary", key="v421_run"):
+                    if v421_start > v421_end:
+                        st.error("V4.21 start date must be on or before end date.")
+                    else:
+                        from trade_reconciliation import build_v421_reconciliation
+                        with st.spinner("Re-running the unchanged production entry engine and reconciling monthly entries..."):
+                            spot21 = add_price_action_signals(opt_hist)
+                            spot21 = add_breakout_retest_signals(spot21, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                            spot21["v413_buy_retest"] = spot21["v413_buy_retest"].fillna(False)
+                            spot21["v413_sell_retest"] = spot21["v413_sell_retest"].fillna(False)
+                            call21 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            put21 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                            result21 = build_v421_reconciliation(spot21, call21, put21, v421_start, v421_end, premium_stop, premium_target)
+                            st.session_state["v421_reconciliation"] = {"table": result21, "start": v421_start, "end": v421_end}
+                        st.success("V4.21 reconciliation completed.")
+                if "v421_reconciliation" in st.session_state:
+                    r21 = st.session_state["v421_reconciliation"]
+                    t21 = r21["table"]
+                    st.markdown("### V4.21 monthly reconciliation results")
+                    st.caption(f"{r21['start']} to {r21['end']} • unchanged V4.13 signals • production backtester • one entry per direction/day")
+                    st.dataframe(t21, hide_index=True, use_container_width=True)
+                    if not t21.empty:
+                        totals21 = t21.groupby("side", as_index=False).agg(
+                            signals=("spot_signals", "sum"), atm_missing=("atm_missing", "sum"),
+                            next_timestamp_missing=("next_timestamp_missing", "sum"),
+                            same_strike_next_bar_missing=("same_strike_next_bar_missing", "sum"),
+                            next_bar_candidates=("next_bar_candidates", "sum"),
+                            actual_backtest_entries=("actual_backtest_entries", "sum"),
+                            signals_not_entered_by_full_backtest=("signals_not_entered_by_full_backtest", "sum"))
+                        st.markdown("#### CALL / PUT reconciliation totals")
+                        st.dataframe(totals21, hide_index=True, use_container_width=True)
+                        st.download_button("Download V4.21 reconciliation CSV", t21.to_csv(index=False).encode("utf-8"), "v421_trade_reconciliation.csv", "text/csv", key="v421_csv")
+                    st.warning("Signals not entered by the full backtest are a residual category: it can include the one-entry-per-day limit, an already-open position, time cutoffs, and other production-engine sequencing rules. Do not interpret this residual as a single rejection cause.")
+            except Exception as exc:
+                st.error(f"V4.21 reconciliation failed: {exc}")
 
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
