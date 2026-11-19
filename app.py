@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.17", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.17 local data diagnostics")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 read-only data diagnostics")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.18", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.18 historical lot-size validation")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -852,6 +852,79 @@ with tabs[5]:
                 else:
                     st.warning("No completed V4.14 trades in the selected period. This is not evidence of profitability.")
                 st.caption("The out-of-sample period is the decisive validation. Do not tune settings using OOS results and then report the same period as an independent test.")
+            st.markdown("#### V4.18 — Historical lot-size-aware validation")
+            st.caption("Runs unchanged V4.13 breakout-retest signals with a manually verified effective-date lot-size schedule. CALL and PUT are reported separately. The app does not guess historical lot sizes or infer them from option candles.")
+            st.warning("Before running, verify each lot-size effective date and quantity from official NSE contract specifications / Dhan contract files. The schedule must cover the entire selected test period without gaps or overlaps. Incorrect schedule values produce incorrect rupee P&L.")
+            v418_default_schedule = pd.DataFrame([
+                {"start_date": opt_start, "end_date": opt_end, "lot_size": None}
+            ])
+            v418_schedule = st.data_editor(v418_default_schedule, num_rows="dynamic", use_container_width=True, key="v418_lot_schedule_editor",
+                column_config={
+                    "start_date": st.column_config.DateColumn("Effective from", format="DD/MM/YYYY"),
+                    "end_date": st.column_config.DateColumn("Effective through", format="DD/MM/YYYY"),
+                    "lot_size": st.column_config.NumberColumn("Verified units per lot", min_value=1, step=1, help="Enter the official lot size effective during this date range.")
+                })
+            if st.button("Run V4.18 lot-size-aware validation", type="primary", key="v418_run"):
+                try:
+                    from lot_schedule import validate_lot_schedule, run_scheduled_backtest
+                    schedule18 = validate_lot_schedule(v418_schedule, opt_start, opt_end)
+                    with st.spinner("Running daily backtests using the verified lot-size schedule..."):
+                        spot18 = add_price_action_signals(opt_hist)
+                        spot18 = add_breakout_retest_signals(spot18, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                        spot18 = spot18.loc[(spot18.index.date >= opt_start) & (spot18.index.date <= opt_end)].copy()
+                        spot18["buy_setup"] = spot18["v413_buy_retest"].fillna(False)
+                        spot18["sell_setup"] = spot18["v413_sell_retest"].fillna(False)
+                        spot18["signal_reason"] = ""
+                        spot18.loc[spot18["buy_setup"], "signal_reason"] = "v413_bullish_breakout_retest_60"
+                        spot18.loc[spot18["sell_setup"], "signal_reason"] = "v413_bearish_breakout_retest_60"
+                        c18 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        p18 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        for frame18 in (c18, p18):
+                            if getattr(frame18.index, "tz", None) is not None:
+                                frame18.index = frame18.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                            frame18.columns = [str(col).lower() for col in frame18.columns]
+                        c18 = c18.loc[(c18.index.date >= opt_start) & (c18.index.date <= opt_end)]
+                        p18 = p18.loc[(p18.index.date >= opt_start) & (p18.index.date <= opt_end)]
+                        tc18 = run_scheduled_backtest(spot18, c18, "CALL", premium_stop, premium_target, schedule18, opt_start, opt_end, int(option_lots), option_slippage, option_brokerage, 1)
+                        tp18 = run_scheduled_backtest(spot18, p18, "PUT", premium_stop, premium_target, schedule18, opt_start, opt_end, int(option_lots), option_slippage, option_brokerage, 1)
+                        trades18 = pd.concat([x for x in (tc18, tp18) if not x.empty], ignore_index=True) if (not tc18.empty or not tp18.empty) else pd.DataFrame()
+                        if not trades18.empty:
+                            trades18["entry_time"] = pd.to_datetime(trades18["entry_time"])
+                            trades18["exit_time"] = pd.to_datetime(trades18["exit_time"])
+                            trades18["period"] = trades18["entry_time"].dt.date.map(lambda d: "Out-of-sample" if d >= v414_oos_start else "In-sample")
+                        st.session_state["v418_results"] = {"trades": trades18, "schedule": schedule18, "start": opt_start, "end": opt_end, "oos_start": v414_oos_start, "lots": int(option_lots), "stop": float(premium_stop), "target": float(premium_target), "slippage": float(option_slippage), "brokerage": float(option_brokerage)}
+                except Exception as exc:
+                    st.error(f"V4.18 validation failed: {exc}")
+            if "v418_results" in st.session_state:
+                r18 = st.session_state["v418_results"]
+                t18 = r18["trades"]
+                st.markdown("### V4.18 results — historical lot sizes applied")
+                st.dataframe(r18["schedule"], hide_index=True, use_container_width=True)
+                st.caption(f"{r18['start']} to {r18['end']} • OOS from {r18['oos_start']} • {r18['lots']} lot(s) • V4.13 signal rules unchanged")
+                def _v418_stats(frame18):
+                    if frame18.empty:
+                        return {"Trades": 0, "Win rate": "N/A", "Gross P&L ₹": 0.0, "Slippage ₹": 0.0, "Brokerage ₹": 0.0, "Net P&L ₹": 0.0, "Max drawdown ₹": 0.0}
+                    z = frame18.sort_values("exit_time").copy()
+                    net = pd.to_numeric(z["net_pnl_inr"], errors="coerce").fillna(0)
+                    eq = net.cumsum()
+                    return {"Trades": len(z), "Win rate": f"{(net > 0).mean()*100:.2f}%", "Gross P&L ₹": z["gross_pnl_inr"].sum(), "Slippage ₹": z["slippage_inr"].sum(), "Brokerage ₹": z["brokerage_inr"].sum(), "Net P&L ₹": net.sum(), "Max drawdown ₹": (eq-eq.cummax()).min()}
+                for period18 in ("In-sample", "Out-of-sample"):
+                    st.markdown(f"#### {period18}")
+                    subset18 = t18[t18["period"] == period18] if not t18.empty else pd.DataFrame()
+                    st.dataframe(pd.DataFrame([_v418_stats(subset18)]), hide_index=True, use_container_width=True)
+                    for side18 in ("CALL", "PUT"):
+                        side_subset18 = subset18[subset18["option_side"] == side18] if not subset18.empty else pd.DataFrame()
+                        st.caption(f"{side18}: {len(side_subset18)} trades • Net P&L ₹{side_subset18['net_pnl_inr'].sum():,.2f}" if not side_subset18.empty else f"{side18}: 0 trades")
+                if not t18.empty:
+                    st.markdown("#### CALL vs PUT performance")
+                    side_summary18 = t18.groupby(["period", "option_side"], as_index=False).agg(trades=("net_pnl_inr", "size"), win_rate_pct=("net_pnl_inr", lambda x: (x > 0).mean()*100), gross_pnl_inr=("gross_pnl_inr", "sum"), slippage_inr=("slippage_inr", "sum"), brokerage_inr=("brokerage_inr", "sum"), net_pnl_inr=("net_pnl_inr", "sum"))
+                    st.dataframe(side_summary18, hide_index=True, use_container_width=True)
+                    st.download_button("Download V4.18 all trades CSV", t18.to_csv(index=False).encode("utf-8"), "v418_all_trades.csv", "text/csv", key="v418_trades_dl")
+                    st.download_button("Download V4.18 CALL/PUT summary CSV", side_summary18.to_csv(index=False).encode("utf-8"), "v418_call_put_summary.csv", "text/csv", key="v418_summary_dl")
+                else:
+                    st.warning("No completed V4.18 trades in the selected period.")
+                st.caption("V4.18 applies the user-entered lot size by effective date. It does not automatically verify the schedule against NSE records. Verify official contract specifications before relying on INR results. Research only; no orders are placed.")
+
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
                 st.markdown("### V4.12 volume-confirmed results")

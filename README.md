@@ -203,3 +203,9 @@ V4.17 adds a **Run local Spot + CALL + PUT data validation** action in the histo
 The report includes row counts, first/last timestamps, unique dates/timestamps, duplicate timestamp/strike rows, invalid timestamps, strike coverage counts, CALL/PUT date intersections, Spot timestamp matching (exact and within five minutes), skipped-date manifest contents, and a warning that historical lot sizes must be verified independently. Spot-session gaps are evaluated only within the available option-history date span, to avoid incorrectly flagging older Spot-only history.
 
 This is a structural/coverage diagnostic, not proof that every contract was tradable or that the historical lot size is correct. Review the report before running an extended backtest.
+
+## V4.18 — Historical lot-size-aware validation
+
+V4.18 adds a separate extended backtest that applies a manually verified lot-size schedule by effective date. Enter non-overlapping `start_date`, `end_date`, and `lot_size` rows that cover the entire selected test period. The app rejects missing, overlapping, non-positive, or incomplete schedules. It then runs the unchanged V4.13 breakout-retest signals one trading day at a time using that day's configured lot size. CALL and PUT results are reported separately for in-sample and out-of-sample periods, with trade-level lot size and quantity included in the export.
+
+The application does **not** infer historical lot sizes or contract expiry lot sizes from the option candle CSV. Users must verify each effective date and lot size against official NSE contract specifications or broker contract metadata before running. If lot size changed during the test period, enter a new schedule row at the correct effective date. This is a research backtest, not a broker order system.
