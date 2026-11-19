@@ -188,7 +188,10 @@ def run_v424_csv_resumable(spot_signals: pd.DataFrame, option_csv: str, option_t
         trades = pd.read_csv(trades_path, parse_dates=["entry_time", "exit_time", "signal_time"]) if trades_path.exists() else pd.DataFrame()
         if not trades.empty:
             trades = trades.sort_values(["entry_time", "exit_time"]).reset_index(drop=True)
-        return trades, _trade_metrics(trades), _monthly(trades, side), len(days), len(days)
+        missing_path = root / "missing_option_data.csv"
+        missing_report = pd.read_csv(missing_path, parse_dates=["signal_time"]) if missing_path.exists() else pd.DataFrame(
+            columns=["date", "signal_time", "side", "status", "reason"])
+        return trades, _trade_metrics(trades), _monthly(trades, side), len(days), len(days), missing_report
 
     # The source is timestamp sorted. We hold the last date from each chunk so
     # that a trading day split across a chunk boundary is not processed early.
@@ -258,16 +261,38 @@ def run_v424_csv_resumable(spot_signals: pd.DataFrame, option_csv: str, option_t
         for day, frame in pending.groupby("_day", sort=True):
             process_day(day, frame.drop(columns=["_day"]))
 
-    # Validate coverage for every Spot trading session, not just the days
-    # reached before a disconnect. A missing day must never produce a partial result.
-    missing = sorted(set(days) - found_days)
-    if missing:
-        preview = ", ".join(str(d) for d in missing[:8])
-        raise ValueError(f"{side} option history is missing {len(missing)} Spot trading day(s): {preview}. Full-period P&L is not available.")
+    # A session needs option candles only when this side generated a V4.13
+    # retest signal. Spot-only dates (weekends/holidays or no-signal sessions)
+    # are completed without demanding an option file row.
+    missing_path = root / "missing_option_data.csv"
+    missing_rows = []
+    for day in days:
+        day_key = str(day)
+        if day_key in completed:
+            continue
+        if day_key not in found_days:
+            sd = spot.loc[spot.index.date == day]
+            signal_rows = sd.loc[sd[sig_col].fillna(False).astype(bool)]
+            if not signal_rows.empty:
+                for ts in signal_rows.index:
+                    missing_rows.append({"date": day_key, "signal_time": ts, "side": side,
+                                         "status": "MISSING_OPTION_DATA",
+                                         "reason": "No option candles found for signal date; trade not simulated"})
+                if missing_rows:
+                    pd.DataFrame(missing_rows).to_csv(missing_path, mode="a",
+                        header=not missing_path.exists(), index=False)
+        completed.add(day_key)
+        state_path.write_text(json.dumps({"completed": sorted(completed)}))
+        processed_now += 1
+        if progress_callback:
+            progress_callback(len(completed), len(days), side, day)
+
     if completed != set(map(str, days)):
         state_path.write_text(json.dumps({"completed": sorted(completed)}))
         raise RuntimeError(f"{side} backtest paused after {len(completed)}/{len(days)} sessions. Press Run again to resume; completed sessions are saved.")
     trades = pd.read_csv(trades_path, parse_dates=["entry_time", "exit_time", "signal_time"]) if trades_path.exists() else pd.DataFrame()
     if not trades.empty:
         trades = trades.sort_values(["entry_time", "exit_time"]).reset_index(drop=True)
-    return trades, _trade_metrics(trades), _monthly(trades, side), len(completed), len(days)
+    missing_report = pd.read_csv(missing_path, parse_dates=["signal_time"]) if missing_path.exists() else pd.DataFrame(
+        columns=["date", "signal_time", "side", "status", "reason"])
+    return trades, _trade_metrics(trades), _monthly(trades, side), len(completed), len(days), missing_report

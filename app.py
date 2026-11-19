@@ -1116,7 +1116,7 @@ with tabs[5]:
                 st.error(f"V4.23 diagnostics failed: {exc}")
 
             st.markdown("#### V4.24 — Full historical profitability (CALL + PUT)")
-            st.caption("Low-memory chronological backtest. CALL is streamed and checkpointed first, then PUT; only one side and small CSV chunks are in memory at a time. Separate trade/monthly CSV reports and a combined comparison. Uses saved weekly option candles only; no Dhan API calls.")
+            st.caption("V4.24.3 low-memory chronological backtest. CALL is streamed and checkpointed first, then PUT; only one side and small CSV chunks are in memory at a time. Separate trade/monthly CSV reports and a combined comparison. Uses saved weekly option candles only; no Dhan API calls.")
             st.warning("Lot-size schedule below is prefilled from the values previously entered: 75 units through 23-Dec-2025 and 65 units from 24-Dec-2025. Verify these against the official historical contract specifications before relying on rupee P&L. Brokerage is an estimate; statutory charges, taxes and exchange levies may differ.")
             try:
                 from io import StringIO
@@ -1159,13 +1159,13 @@ with tabs[5]:
                                 text=f"{side}: completed {done}/{total} sessions; latest {day}")
                             v424_status.write(f"Saved {side} session {done} of {total} to /var/data. If interrupted, press Run again to resume.")
                         with st.spinner("Processing CALL first, then PUT. Option CSVs are streamed in small chunks; do not close this page..."):
-                            call_trades24, call_metrics24, call_monthly24, call_done24, call_total24 = run_v424_csv_resumable(
+                            call_trades24, call_metrics24, call_monthly24, call_done24, call_total24, call_missing24 = run_v424_csv_resumable(
                                 spot424, call_file, "CALL", schedule424, v424_start, v424_end, DATA_DIR,
                                 int(v424_lots_n), v424_pstop, v424_ptarget, v424_slip, v424_broker,
                                 chunksize=6000, progress_callback=v424_update)
                             gc.collect()
                             v424_progress.progress(0, text="CALL complete. Starting PUT...")
-                            put_trades24, put_metrics24, put_monthly24, put_done24, put_total24 = run_v424_csv_resumable(
+                            put_trades24, put_metrics24, put_monthly24, put_done24, put_total24, put_missing24 = run_v424_csv_resumable(
                                 spot424, put_file, "PUT", schedule424, v424_start, v424_end, DATA_DIR,
                                 int(v424_lots_n), v424_pstop, v424_ptarget, v424_slip, v424_broker,
                                 chunksize=6000, progress_callback=v424_update)
@@ -1175,10 +1175,18 @@ with tabs[5]:
                             "call_trades": call_trades24, "put_trades": put_trades24,
                             "call_metrics": call_metrics24, "put_metrics": put_metrics24,
                             "call_monthly": call_monthly24, "put_monthly": put_monthly24,
+                            "call_missing": call_missing24, "put_missing": put_missing24,
                             "expiry": opt_expiry_flag, "expiry_code": int(opt_expiry_code), "interval": int(opt_interval),
                             "lots": int(v424_lots_n), "stop": float(v424_pstop), "target": float(v424_ptarget),
                             "slippage": float(v424_slip), "brokerage": float(v424_broker)}
                         st.success(f"V4.24 completed. CALL: {call_done24}/{call_total24} sessions; PUT: {put_done24}/{put_total24} sessions. Separate reports are ready below.")
+                        missing_all24 = pd.concat([call_missing24, put_missing24], ignore_index=True)
+                        if not missing_all24.empty:
+                            st.warning(f"{len(missing_all24)} signal(s) had no matching option candles and were excluded from P&L. Review the missing-data report below.")
+                            st.dataframe(missing_all24, hide_index=True, use_container_width=True)
+                            st.download_button("Download V4.24 missing option data report", missing_all24.to_csv(index=False).encode("utf-8"), "v424_missing_option_data.csv", "text/csv", key="v424_missing_data_csv")
+                        else:
+                            st.success("No signal dates were missing option candles.")
                     except Exception as exc:
                         st.error(f"V4.24 backtest could not complete: {exc}")
                 if "v424_results" in st.session_state:
@@ -1198,7 +1206,7 @@ with tabs[5]:
                         st.markdown(f"##### {side24} — monthly report")
                         st.dataframe(monthly24, hide_index=True, use_container_width=True)
                         st.download_button(f"Download V4.24 {side24} monthly CSV", monthly24.to_csv(index=False).encode("utf-8"), f"v424_{key24}_monthly.csv", "text/csv", key=f"v424_{key24}_monthly_csv")
-                    st.caption("V4.24.2 preserves the V4.13 signal rules. Option CSVs are streamed in 6,000-row chunks and each completed session is checkpointed under /var/data; rerunning resumes completed sessions. Each position is intraday and is squared off by the existing premium engine; daily position state is therefore carried through each full session. CALL and PUT are tested separately, each with at most one entry per direction per day. No counterfactual trades are added for signals rejected by the daily limit or cutoff.")
+                    st.caption("V4.24.3 preserves the V4.13 signal rules. No-signal Spot dates do not require option candles; missing option candles on actual signal dates are listed separately and excluded from P&L. Option CSVs are streamed in 6,000-row chunks and each completed session is checkpointed under /var/data; rerunning resumes completed sessions. Each position is intraday and is squared off by the existing premium engine; daily position state is therefore carried through each full session. CALL and PUT are tested separately, each with at most one entry per direction per day. No counterfactual trades are added for signals rejected by the daily limit or cutoff.")
             except Exception as exc:
                 st.error(f"V4.24 module could not be loaded: {exc}")
 
