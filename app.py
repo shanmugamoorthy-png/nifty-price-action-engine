@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.21", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.22 resumable reconciliation")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.23", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.23 rejection diagnostics")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation • V4.23 per-signal rejection reasons")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -1065,6 +1065,55 @@ with tabs[5]:
                     st.error("V4.22 start must be on or before end.")
             except Exception as exc:
                 st.error(f"V4.22 month processing failed: {exc}")
+
+            st.markdown("#### V4.23 — Per-signal rejection-reason diagnostics")
+            st.caption("Runs the unchanged V4.13 breakout/retest signals and the production V4.18 one-entry-per-direction/day option engine one month at a time. Produces one row per CALL/PUT signal with the selected strike, expected next option candle, actual entry/exit, and a rejection label. No Dhan requests and no changes to saved market data.")
+            st.warning("V4.23 is a monthly diagnostic approximation: open positions do not carry across month boundaries. Rejection labels distinguish directly verifiable data/cutoff/daily-limit cases; any unexplained residual is explicitly labelled ENGINE_SEQUENCE_OR_UNEXPORTED_STATE rather than guessed.")
+            try:
+                from monthly_rejection import v423_key, run_v423_month, load_v423_progress
+                v423a, v423b = st.columns(2)
+                with v423a:
+                    v423_start = st.date_input("V4.23 start", value=date(2025,12,1), key="v423_start")
+                with v423b:
+                    v423_end = st.date_input("V4.23 end", value=date(2026,10,31), key="v423_end")
+                if v423_start <= v423_end:
+                    key423 = v423_key(v423_start, v423_end, premium_stop, premium_target, call_file, put_file, DATA_FILE)
+                    progress423 = load_v423_progress(DATA_DIR, key423)
+                    months423 = pd.period_range(pd.Timestamp(v423_start).to_period("M"), pd.Timestamp(v423_end).to_period("M"), freq="M")
+                    done423 = set(progress423.keys())
+                    remaining423 = [m for m in months423 if str(m) not in done423]
+                    st.write(f"V4.23 completed months: {len(months423)-len(remaining423)} / {len(months423)}")
+                    if remaining423:
+                        st.info(f"Next month: {remaining423[0]}. Press once and wait for completion.")
+                    if st.button("Process next V4.23 diagnostic month", disabled=not remaining423, type="primary", key="v423_next"):
+                        with st.spinner(f"Reconciling individual signals for {remaining423[0]}..."):
+                            run_v423_month(DATA_DIR, key423, remaining423[0], DATA_FILE, call_file, put_file,
+                                           v423_start, v423_end, premium_stop, premium_target)
+                        st.success(f"Saved V4.23 signal ledger for {remaining423[0]}.")
+                        st.rerun()
+                    if progress423:
+                        ledgers423=[]; summaries423=[]
+                        for month_data in progress423.values():
+                            if month_data.get("ledger"): ledgers423.append(pd.DataFrame(month_data["ledger"]))
+                            if month_data.get("summary"): summaries423.append(pd.DataFrame(month_data["summary"]))
+                        if summaries423:
+                            summary423=pd.concat(summaries423,ignore_index=True).sort_values(["month","side"])
+                            st.markdown("##### Monthly rejection summary")
+                            st.dataframe(summary423,hide_index=True,use_container_width=True)
+                            st.download_button("Download V4.23 monthly rejection summary",summary423.to_csv(index=False).encode("utf-8"),"v423_monthly_rejection_summary.csv","text/csv",key="v423_summary_csv")
+                        if ledgers423:
+                            ledger423=pd.concat(ledgers423,ignore_index=True).sort_values(["signal_time","side"])
+                            st.markdown("##### Individual signal ledger")
+                            st.dataframe(ledger423,hide_index=True,use_container_width=True)
+                            st.download_button("Download V4.23 individual signal ledger",ledger423.to_csv(index=False).encode("utf-8"),"v423_individual_signal_ledger.csv","text/csv",key="v423_ledger_csv")
+                            reasons423=ledger423.loc[ledger423.status.eq("NOT_ENTERED")].groupby(["side","rejection_reason"],as_index=False).size()
+                            st.markdown("##### Not-entered signals by recorded reason")
+                            st.dataframe(reasons423,hide_index=True,use_container_width=True)
+                    st.caption("Progress is saved atomically under /var/data and resumes after a disconnect. Changing dates, premium stop/target, or source files creates a separate progress set.")
+                else:
+                    st.error("V4.23 start must be on or before end.")
+            except Exception as exc:
+                st.error(f"V4.23 diagnostics failed: {exc}")
 
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]

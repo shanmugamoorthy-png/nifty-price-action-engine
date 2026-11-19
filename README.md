@@ -224,3 +224,19 @@ The `signals_not_entered_by_full_backtest` field is deliberately labelled as a r
 Open NIFTY Options Buying, scroll to **V4.22 — Resumable one-month reconciliation**. Choose dates, then press **Process next V4.22 month** once per month. Results are written atomically to the existing persistent `DATA_DIR` (normally `/var/data`) in `v422_progress_<key>.json`, and the button advances on the next click. A disconnect cannot erase previously saved months. Download the small CSV once completed. Do not use the older V4.21 full-range button for large histories.
 
 **Methodology limitation:** Each month is evaluated independently with a 45-calendar-day warm-up for signal structure. Open positions, pending setups, and one-trade-per-day state do not carry across monthly boundaries. Thus monthly entries are **diagnostic approximations**, not a mathematically exact reconciliation with one continuous multi-month backtest. A separate continuous backtest is still required before interpreting historical P&L. Historical lot-size-aware P&L remains in V4.18 and is not recalculated by V4.22. No Dhan requests are made by this diagnostic.
+
+## V4.23 — Per-signal rejection diagnostics
+
+V4.23 adds a resumable, one-month-at-a-time diagnostic that creates an individual
+ledger row for every unchanged V4.13 CALL/PUT signal. It records the signal time,
+selected ATM strike, expected next option candle, actual entry/exit when accepted,
+exit reason, and a rejection label for signals not entered. The production option
+backtester and V4.18 one-entry-per-direction/day rule are reused with zero costs
+for entry reconciliation. No Dhan API request is made and source CSVs are read-only.
+
+The progress JSON is stored under `DATA_DIR` (normally `/var/data`) and written
+atomically. Monthly runs are diagnostic approximations because open-position state
+does not carry across month boundaries. `ENGINE_SEQUENCE_OR_UNEXPORTED_STATE` is
+an explicit residual category, not a guessed cause; compare the individual ledger
+with trade exports before drawing conclusions. This tool is research-only and does
+not place orders or establish profitability.
