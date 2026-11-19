@@ -195,3 +195,11 @@ V4.16 changes only the historical options data-collection workflow and retains t
 **Important:** The merge is separated by the currently selected expiry type, expiry sequence and timeframe because each combination has its own saved files. Do not switch these settings midway through collecting one intended dataset. Lot sizes remain a manual backtest input and must be checked for each historical contract regime.
 
 Automated tests cover overlapping-row replacement, retention of distinct absolute strikes at the same timestamp, preservation of prior months, and cumulative skipped-date manifests. Live Dhan/Render operation still requires verification in the user's deployed service.
+
+## V4.17 — Read-only local data diagnostics
+
+V4.17 adds a **Run local Spot + CALL + PUT data validation** action in the historical options section. It reads the existing NIFTY Spot, accumulated CALL and accumulated PUT files directly from `DATA_DIR` on the Render service and generates a compact downloadable `nifty_v417_data_validation.json` report. It does not call Dhan, upload the large CSVs, or modify the saved datasets.
+
+The report includes row counts, first/last timestamps, unique dates/timestamps, duplicate timestamp/strike rows, invalid timestamps, strike coverage counts, CALL/PUT date intersections, Spot timestamp matching (exact and within five minutes), skipped-date manifest contents, and a warning that historical lot sizes must be verified independently. Spot-session gaps are evaluated only within the available option-history date span, to avoid incorrectly flagging older Spot-only history.
+
+This is a structural/coverage diagnostic, not proof that every contract was tradable or that the historical lot size is correct. Review the report before running an extended backtest.

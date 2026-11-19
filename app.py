@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
@@ -13,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.16", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.16 monthly option-data builder")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.17", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.17 local data diagnostics")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 read-only data diagnostics")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -486,6 +487,35 @@ with tabs[5]:
                         mime="application/json",
                         key="v415_download_coverage_json",
                     )
+
+                # V4.17: on-Render diagnostics; reads existing files only and never uploads large CSVs.
+                st.markdown("#### V4.17 — Local saved-data validation")
+                st.caption("Creates a small JSON report on Render from the saved Spot, CALL and PUT files. Read-only: no Dhan API calls, no CSV downloads, and no changes to your saved datasets.")
+                if st.button("Run local Spot + CALL + PUT data validation", key="v417_run_diagnostics"):
+                    try:
+                        from data_diagnostics import build_diagnostic_report
+                        with st.spinner("Checking saved CSV files on Render..."):
+                            report = build_diagnostic_report(opt_hist, call_file, put_file, manifest_file)
+                        st.session_state["v417_diagnostic_report"] = report
+                        st.success("Validation report generated. Your large CSV files remain on Render.")
+                    except Exception as diagnostic_exc:
+                        st.error(f"Data validation could not complete: {diagnostic_exc}")
+                diagnostic_report = st.session_state.get("v417_diagnostic_report")
+                if diagnostic_report:
+                    dcall, dput = diagnostic_report.get("CALL", {}), diagnostic_report.get("PUT", {})
+                    dc1, dc2, dc3 = st.columns(3)
+                    dc1.metric("Spot candles", f"{diagnostic_report.get('spot', {}).get('rows', 0):,}")
+                    dc2.metric("CALL rows", f"{dcall.get('rows', 0):,}")
+                    dc3.metric("PUT rows", f"{dput.get('rows', 0):,}")
+                    st.write(f"**CALL date range:** {dcall.get('first_date') or 'Not available'} to {dcall.get('last_date') or 'Not available'}")
+                    st.write(f"**PUT date range:** {dput.get('first_date') or 'Not available'} to {dput.get('last_date') or 'Not available'}")
+                    st.write(f"**Dates present in both CALL and PUT:** {len(diagnostic_report.get('call_put_date_intersection', []))}")
+                    st.write(f"**CALL dates missing from PUT:** {len(diagnostic_report.get('call_dates_missing_from_put', []))}")
+                    st.write(f"**PUT dates missing from CALL:** {len(diagnostic_report.get('put_dates_missing_from_call', []))}")
+                    st.write(f"**Exact Spot timestamp match:** CALL {dcall.get('exact_timestamp_match_pct', 'N/A')}% • PUT {dput.get('exact_timestamp_match_pct', 'N/A')}%")
+                    st.write(f"**Within 5-minute Spot match:** CALL {dcall.get('within_5m_match_pct', 'N/A')}% • PUT {dput.get('within_5m_match_pct', 'N/A')}%")
+                    st.download_button("Download compact V4.17 validation report (JSON)", data=json.dumps(diagnostic_report, indent=2, default=str), file_name="nifty_v417_data_validation.json", mime="application/json", key="v417_download_diagnostic_json")
+                    st.warning("This report validates file structure and timestamp coverage, not historical lot size or complete contract tradability. Confirm historical lot sizes separately before trusting rupee P&L.")
 
                 if st.button("Run V4.9 baseline (no extra filters) option backtest", type="primary", key="v49_run_options"):
                     try:
