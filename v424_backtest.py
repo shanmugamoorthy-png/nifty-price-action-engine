@@ -108,6 +108,10 @@ def run_v424_backtest(spot_signals: pd.DataFrame, option_bars: pd.DataFrame, opt
         preview = ", ".join(str(d) for d in missing_option_days[:8])
         suffix = " ..." if len(missing_option_days) > 8 else ""
         raise ValueError(f"Option history is missing {len(missing_option_days)} Spot trading day(s): {preview}{suffix}. Do not interpret a partial-coverage run as a full backtest.")
+    # Group once instead of repeatedly scanning the full multi-year frames for
+    # every session. This substantially reduces CPU work on small Render instances.
+    spot_by_day = {day: frame for day, frame in spot.groupby(spot.index.date, sort=True)}
+    opts_by_day = {day: frame for day, frame in opts.groupby(opts.index.date, sort=True)}
     trading_days = sorted(spot_days)
     for day in trading_days:
         schedule_hit = schedule.loc[(schedule.start_date <= day) & (schedule.end_date >= day)]
@@ -115,8 +119,10 @@ def run_v424_backtest(spot_signals: pd.DataFrame, option_bars: pd.DataFrame, opt
             raise ValueError(f"No historical lot size configured for {day}")
         lot_size = int(schedule_hit.iloc[0].lot_size)
         quantity = int(lots) * lot_size
-        sd = spot.loc[spot.index.date == day]
-        od = opts.loc[opts.index.date == day]
+        sd = spot_by_day.get(day)
+        od = opts_by_day.get(day)
+        if sd is None or od is None:
+            raise ValueError(f"Missing grouped candles for {day}; refusing a partial backtest")
         trades, _ = run_option_buying_backtest(
             sd, od, side, premium_stop, premium_target, quantity=quantity,
             slippage_per_side=slippage_per_side, brokerage_round_trip=brokerage_round_trip,
