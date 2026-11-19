@@ -35,6 +35,7 @@
   "tests/test_trade_reconciliation.py::TradeReconciliationTests::test_empty_signal_months_are_reported",
   "tests/test_trade_reconciliation.py::TradeReconciliationTests::test_signal_with_missing_atm_is_counted",
   "tests/test_v424_backtest.py::test_v424_call_trade_applies_historical_lot_size_and_costs",
+  "tests/test_v424_backtest.py::test_v424_csv_streaming_matches_in_memory_and_resumes",
   "tests/test_v424_backtest.py::test_v424_rejects_lot_schedule_gap",
   "tests/test_v424_backtest.py::test_v424_rejects_missing_option_trading_day",
   "tests/test_v44_variants.py::V44VariantTests::test_v44_variant_columns_exist_and_are_boolean",

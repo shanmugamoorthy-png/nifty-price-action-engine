@@ -141,3 +141,133 @@ def run_v424_backtest(spot_signals: pd.DataFrame, option_bars: pd.DataFrame, opt
     metrics = _trade_metrics(result)
     monthly = _monthly(result, side)
     return result, metrics, monthly
+
+
+
+def run_v424_csv_resumable(spot_signals: pd.DataFrame, option_csv: str, option_type: str,
+                           schedule: pd.DataFrame, start_date, end_date, data_dir: str,
+                           lots=1, premium_stop=20.0, premium_target=40.0,
+                           slippage_per_side=0.50, brokerage_round_trip=40.0,
+                           chunksize=6000, progress_callback=None):
+    """Low-memory, resumable V4.24 runner for one option side.
+
+    Reads one side's CSV in bounded chunks, retains at most a partial trading
+    day plus one chunk, processes complete sessions, and checkpoints each day
+    under data_dir. The option CSV is never loaded in full.
+    """
+    import os, json, hashlib
+    from pathlib import Path
+    side = str(option_type).upper()
+    if side not in {"CALL", "PUT"}:
+        raise ValueError("Side must be CALL or PUT")
+    start, end = pd.Timestamp(start_date).date(), pd.Timestamp(end_date).date()
+    if start > end:
+        raise ValueError("Start date must be on or before end date")
+    schedule = validate_lot_schedule(schedule, start, end)
+    spot = _normalise(spot_signals)
+    sig_col = "v413_buy_retest" if side == "CALL" else "v413_sell_retest"
+    setup_col = "buy_setup" if side == "CALL" else "sell_setup"
+    if sig_col not in spot.columns:
+        raise ValueError(f"Spot signal data missing {sig_col}")
+    spot = spot.loc[(spot.index.date >= start) & (spot.index.date <= end)].copy()
+    spot[setup_col] = spot[sig_col].fillna(False).astype(bool)
+    other = "sell_setup" if side == "CALL" else "buy_setup"
+    spot[other] = False
+    if spot.empty:
+        raise ValueError("No Spot candles in the selected period")
+    days = sorted(set(spot.index.date))
+    key_payload = f"V4.24.2|{side}|{os.path.abspath(option_csv)}|{start}|{end}|{lots}|{premium_stop}|{premium_target}|{slippage_per_side}|{brokerage_round_trip}|{schedule.to_csv(index=False)}|{os.path.getsize(option_csv)}|{os.path.getmtime(option_csv)}"
+    key = hashlib.sha256(key_payload.encode()).hexdigest()[:16]
+    root = Path(data_dir) / "v424_lowmem" / key
+    root.mkdir(parents=True, exist_ok=True)
+    state_path, trades_path = root / "state.json", root / "trades.csv"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {"completed": []}
+    completed = set(state.get("completed", []))
+    pending_days = [d for d in days if str(d) not in completed]
+    if not pending_days:
+        trades = pd.read_csv(trades_path, parse_dates=["entry_time", "exit_time", "signal_time"]) if trades_path.exists() else pd.DataFrame()
+        if not trades.empty:
+            trades = trades.sort_values(["entry_time", "exit_time"]).reset_index(drop=True)
+        return trades, _trade_metrics(trades), _monthly(trades, side), len(days), len(days)
+
+    # The source is timestamp sorted. We hold the last date from each chunk so
+    # that a trading day split across a chunk boundary is not processed early.
+    pending = pd.DataFrame()
+    processed_now = 0
+    found_days = set()
+    required = ["timestamp", "open", "high", "low", "close", "strike", "spot", "offset"]
+    header = pd.read_csv(option_csv, nrows=0).columns.tolist()
+    usecols = [c for c in required if c in header]
+    if not {"timestamp", "open", "high", "low", "close", "strike", "spot"}.issubset(set(usecols)):
+        raise ValueError("Option CSV is missing required columns (timestamp, OHLC, strike, spot)")
+
+    def process_day(day, day_frame):
+        nonlocal processed_now
+        if day < start or day > end:
+            return
+        found_days.add(day)
+        if str(day) in completed:
+            return
+        sd = spot.loc[spot.index.date == day]
+        if sd.empty:
+            return
+        hit = schedule.loc[(schedule.start_date <= day) & (schedule.end_date >= day)]
+        if hit.empty:
+            raise ValueError(f"No historical lot size configured for {day}")
+        lot_size = int(hit.iloc[0].lot_size)
+        od = day_frame.copy()
+        od["timestamp"] = pd.to_datetime(od["timestamp"])
+        od = od.set_index("timestamp").sort_index()
+        trades, _ = run_option_buying_backtest(sd, od, side, premium_stop, premium_target,
+            quantity=int(lots) * lot_size, slippage_per_side=slippage_per_side,
+            brokerage_round_trip=brokerage_round_trip, max_trades_per_day=1,
+            square_off_time="15:15")
+        if not trades.empty:
+            trades = trades.copy()
+            trades["option_side"] = side
+            trades["trade_date"] = str(day)
+            trades["lot_size"] = lot_size
+            trades["lots"] = int(lots)
+            trades["quantity_units"] = int(lots) * lot_size
+            trades.to_csv(trades_path, mode="a", header=not trades_path.exists(), index=False)
+        completed.add(str(day))
+        state_path.write_text(json.dumps({"completed": sorted(completed)}))
+        processed_now += 1
+        if progress_callback:
+            progress_callback(len(completed), len(days), side, day)
+
+    reader = pd.read_csv(option_csv, usecols=usecols, chunksize=chunksize)
+    for chunk in reader:
+        chunk["timestamp"] = pd.to_datetime(chunk["timestamp"], errors="coerce")
+        chunk = chunk.dropna(subset=["timestamp"])
+        chunk = chunk.loc[(chunk.timestamp.dt.date >= start) & (chunk.timestamp.dt.date <= end)]
+        if chunk.empty:
+            continue
+        if not pending.empty:
+            chunk = pd.concat([pending, chunk], ignore_index=True)
+        chunk = chunk.sort_values("timestamp")
+        chunk["_day"] = chunk.timestamp.dt.date
+        last_day = chunk["_day"].iloc[-1]
+        ready = chunk.loc[chunk._day != last_day]
+        for day, frame in ready.groupby("_day", sort=True):
+            process_day(day, frame.drop(columns=["_day"]))
+        pending = chunk.loc[chunk._day == last_day].drop(columns=["_day"]).copy()
+        del chunk, ready
+    if not pending.empty:
+        pending["_day"] = pd.to_datetime(pending.timestamp).dt.date
+        for day, frame in pending.groupby("_day", sort=True):
+            process_day(day, frame.drop(columns=["_day"]))
+
+    # Validate coverage for every Spot trading session, not just the days
+    # reached before a disconnect. A missing day must never produce a partial result.
+    missing = sorted(set(days) - found_days)
+    if missing:
+        preview = ", ".join(str(d) for d in missing[:8])
+        raise ValueError(f"{side} option history is missing {len(missing)} Spot trading day(s): {preview}. Full-period P&L is not available.")
+    if completed != set(map(str, days)):
+        state_path.write_text(json.dumps({"completed": sorted(completed)}))
+        raise RuntimeError(f"{side} backtest paused after {len(completed)}/{len(days)} sessions. Press Run again to resume; completed sessions are saved.")
+    trades = pd.read_csv(trades_path, parse_dates=["entry_time", "exit_time", "signal_time"]) if trades_path.exists() else pd.DataFrame()
+    if not trades.empty:
+        trades = trades.sort_values(["entry_time", "exit_time"]).reset_index(drop=True)
+    return trades, _trade_metrics(trades), _monthly(trades, side), len(completed), len(days)

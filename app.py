@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.24", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.24 profitability backtest")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation • V4.23 per-signal rejection reasons • V4.24 full CALL/PUT profitability")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.24.2", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.24.2 profitability backtest")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation • V4.23 per-signal rejection reasons • V4.24.2 low-memory CALL/PUT profitability")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -1116,12 +1116,12 @@ with tabs[5]:
                 st.error(f"V4.23 diagnostics failed: {exc}")
 
             st.markdown("#### V4.24 — Full historical profitability (CALL + PUT)")
-            st.caption("One chronological backtest over the selected date range. CALL and PUT are calculated independently, with separate trade/monthly CSV reports and a combined comparison. Uses saved weekly option candles only; no Dhan API calls.")
+            st.caption("Low-memory chronological backtest. CALL is streamed and checkpointed first, then PUT; only one side and small CSV chunks are in memory at a time. Separate trade/monthly CSV reports and a combined comparison. Uses saved weekly option candles only; no Dhan API calls.")
             st.warning("Lot-size schedule below is prefilled from the values previously entered: 75 units through 23-Dec-2025 and 65 units from 24-Dec-2025. Verify these against the official historical contract specifications before relying on rupee P&L. Brokerage is an estimate; statutory charges, taxes and exchange levies may differ.")
             try:
                 from io import StringIO
                 from price_action import add_price_action_signals, add_breakout_retest_signals
-                from v424_backtest import run_v424_backtest
+                from v424_backtest import run_v424_csv_resumable
                 v424c1, v424c2 = st.columns(2)
                 with v424c1:
                     v424_start = st.date_input("V4.24 backtest start", value=date(2025, 12, 1), key="v424_start")
@@ -1150,15 +1150,26 @@ with tabs[5]:
                         schedule424 = pd.read_csv(StringIO(schedule_text))
                         spot424 = add_price_action_signals(opt_hist.copy())
                         spot424 = add_breakout_retest_signals(spot424, body_min=0.60, close_edge=0.70, max_wait_bars=12)
-                        call424 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
-                        put424 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
-                        with st.spinner("Running chronological CALL and PUT option-premium backtests. Please keep this page open..."):
-                            call_trades24, call_metrics24, call_monthly24 = run_v424_backtest(
-                                spot424, call424, "CALL", schedule424, v424_start, v424_end, int(v424_lots_n),
-                                v424_pstop, v424_ptarget, v424_slip, v424_broker)
-                            put_trades24, put_metrics24, put_monthly24 = run_v424_backtest(
-                                spot424, put424, "PUT", schedule424, v424_start, v424_end, int(v424_lots_n),
-                                v424_pstop, v424_ptarget, v424_slip, v424_broker)
+                        import gc
+                        v424_progress = st.progress(0, text="Preparing low-memory backtest...")
+                        v424_status = st.empty()
+                        def v424_update(done, total, side, day):
+                            # Each side has its own day counter; keep UI updates light.
+                            v424_progress.progress(min(100, int(done / max(total, 1) * 100)),
+                                text=f"{side}: completed {done}/{total} sessions; latest {day}")
+                            v424_status.write(f"Saved {side} session {done} of {total} to /var/data. If interrupted, press Run again to resume.")
+                        with st.spinner("Processing CALL first, then PUT. Option CSVs are streamed in small chunks; do not close this page..."):
+                            call_trades24, call_metrics24, call_monthly24, call_done24, call_total24 = run_v424_csv_resumable(
+                                spot424, call_file, "CALL", schedule424, v424_start, v424_end, DATA_DIR,
+                                int(v424_lots_n), v424_pstop, v424_ptarget, v424_slip, v424_broker,
+                                chunksize=6000, progress_callback=v424_update)
+                            gc.collect()
+                            v424_progress.progress(0, text="CALL complete. Starting PUT...")
+                            put_trades24, put_metrics24, put_monthly24, put_done24, put_total24 = run_v424_csv_resumable(
+                                spot424, put_file, "PUT", schedule424, v424_start, v424_end, DATA_DIR,
+                                int(v424_lots_n), v424_pstop, v424_ptarget, v424_slip, v424_broker,
+                                chunksize=6000, progress_callback=v424_update)
+                            gc.collect()
                         st.session_state["v424_results"] = {
                             "start": str(v424_start), "end": str(v424_end),
                             "call_trades": call_trades24, "put_trades": put_trades24,
@@ -1167,7 +1178,7 @@ with tabs[5]:
                             "expiry": opt_expiry_flag, "expiry_code": int(opt_expiry_code), "interval": int(opt_interval),
                             "lots": int(v424_lots_n), "stop": float(v424_pstop), "target": float(v424_ptarget),
                             "slippage": float(v424_slip), "brokerage": float(v424_broker)}
-                        st.success("V4.24 completed. CALL and PUT reports are ready below.")
+                        st.success(f"V4.24 completed. CALL: {call_done24}/{call_total24} sessions; PUT: {put_done24}/{put_total24} sessions. Separate reports are ready below.")
                     except Exception as exc:
                         st.error(f"V4.24 backtest could not complete: {exc}")
                 if "v424_results" in st.session_state:
@@ -1187,7 +1198,7 @@ with tabs[5]:
                         st.markdown(f"##### {side24} — monthly report")
                         st.dataframe(monthly24, hide_index=True, use_container_width=True)
                         st.download_button(f"Download V4.24 {side24} monthly CSV", monthly24.to_csv(index=False).encode("utf-8"), f"v424_{key24}_monthly.csv", "text/csv", key=f"v424_{key24}_monthly_csv")
-                    st.caption("V4.24 preserves the V4.13 signal rules. Each position is intraday and is squared off by the existing premium engine; daily position state is therefore carried through each full session. CALL and PUT are tested separately, each with at most one entry per direction per day. No counterfactual trades are added for signals rejected by the daily limit or cutoff.")
+                    st.caption("V4.24.2 preserves the V4.13 signal rules. Option CSVs are streamed in 6,000-row chunks and each completed session is checkpointed under /var/data; rerunning resumes completed sessions. Each position is intraday and is squared off by the existing premium engine; daily position state is therefore carried through each full session. CALL and PUT are tested separately, each with at most one entry per direction per day. No counterfactual trades are added for signals rejected by the daily limit or cutoff.")
             except Exception as exc:
                 st.error(f"V4.24 module could not be loaded: {exc}")
 

@@ -262,3 +262,20 @@ V4.24 adds a full chronological historical profitability run for both weekly NIF
 - Missing option candles for any Spot trading day in the selected period cause the run to stop instead of silently presenting partial history as a full backtest.
 - Gross P&L, slippage, estimated brokerage, net P&L, win rate, profit factor, max drawdown, consecutive losses and monthly totals are reported separately by side.
 - Taxes, statutory charges and exchange levies are not represented by the brokerage estimate. This is research only and does not place orders.
+
+## V4.24.2 — low-memory resumable profitability backtest
+
+V4.24.2 replaces the full-file CALL + PUT load with a one-side-at-a-time CSV
+streaming runner. It reads 6,000-row chunks, retains only the trailing partial
+session between chunks, runs the existing premium execution engine one trading
+day at a time, and checkpoints each completed session under `DATA_DIR/v424_lowmem`.
+CALL is completed before PUT starts. If the process is interrupted, press the
+V4.24 run button again with the same dates, assumptions, schedule, and source
+file; completed sessions are skipped and remaining sessions resume. Checkpoint
+keys include the side, source path/size/modified time, date range, lot schedule,
+and cost assumptions. The strategy entry/exit rules are unchanged.
+
+The backtest refuses to report a full-period result if any Spot trading day is
+missing from the corresponding option file. It uses saved weekly 5-minute option
+CSV files only and makes no Dhan API requests. The persistent disk mount remains
+`/var/data`; no disk or environment-variable changes are required.

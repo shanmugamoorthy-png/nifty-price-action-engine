@@ -38,3 +38,25 @@ def test_v424_rejects_lot_schedule_gap():
     schedule.loc[0, "end_date"] = "2026-01-10"
     with pytest.raises(ValueError, match="does not cover"):
         run_v424_backtest(spot, opt, "CALL", schedule, "2026-01-01", "2026-01-31")
+
+
+def test_v424_csv_streaming_matches_in_memory_and_resumes(tmp_path):
+    from v424_backtest import run_v424_csv_resumable
+    spot, opt, schedule = _frames()
+    csv_path = tmp_path / "call.csv"
+    opt.reset_index(names="timestamp").to_csv(csv_path, index=False)
+    expected, expected_metrics, expected_monthly = run_v424_backtest(
+        spot, opt, "CALL", schedule, "2026-01-01", "2026-01-31")
+    got, metrics, monthly, done, total = run_v424_csv_resumable(
+        spot, str(csv_path), "CALL", schedule, "2026-01-01", "2026-01-31",
+        str(tmp_path), chunksize=2)
+    assert len(got) == len(expected) == 1
+    assert metrics["Trades"] == expected_metrics["Trades"]
+    assert monthly.equals(expected_monthly)
+    assert (done, total) == (1, 1)
+    # Second run must load the checkpoint rather than duplicate trades.
+    got2, _, _, done2, total2 = run_v424_csv_resumable(
+        spot, str(csv_path), "CALL", schedule, "2026-01-01", "2026-01-31",
+        str(tmp_path), chunksize=2)
+    assert len(got2) == 1
+    assert (done2, total2) == (1, 1)
