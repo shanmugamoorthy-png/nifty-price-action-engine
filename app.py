@@ -14,9 +14,9 @@ from telegram_alert import send_telegram
 load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
-st.set_page_config(page_title="NIFTY Pure Price Action V4.23", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.23 rejection diagnostics")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation • V4.23 per-signal rejection reasons")
+st.set_page_config(page_title="NIFTY Pure Price Action V4.24", page_icon="📈", layout="wide")
+st.title("NIFTY Pure Price Action Engine — V4.24 profitability backtest")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation • V4.23 per-signal rejection reasons • V4.24 full CALL/PUT profitability")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -1114,6 +1114,82 @@ with tabs[5]:
                     st.error("V4.23 start must be on or before end.")
             except Exception as exc:
                 st.error(f"V4.23 diagnostics failed: {exc}")
+
+            st.markdown("#### V4.24 — Full historical profitability (CALL + PUT)")
+            st.caption("One chronological backtest over the selected date range. CALL and PUT are calculated independently, with separate trade/monthly CSV reports and a combined comparison. Uses saved weekly option candles only; no Dhan API calls.")
+            st.warning("Lot-size schedule below is prefilled from the values previously entered: 75 units through 23-Dec-2025 and 65 units from 24-Dec-2025. Verify these against the official historical contract specifications before relying on rupee P&L. Brokerage is an estimate; statutory charges, taxes and exchange levies may differ.")
+            try:
+                from io import StringIO
+                from price_action import add_price_action_signals, add_breakout_retest_signals
+                from v424_backtest import run_v424_backtest
+                v424c1, v424c2 = st.columns(2)
+                with v424c1:
+                    v424_start = st.date_input("V4.24 backtest start", value=date(2025, 12, 1), key="v424_start")
+                with v424c2:
+                    v424_end = st.date_input("V4.24 backtest end", value=date(2026, 10, 31), key="v424_end")
+                v424_stop, v424_target, v424_lots = st.columns(3)
+                with v424_stop:
+                    v424_pstop = st.number_input("V4.24 premium stop (₹ points)", min_value=0.05, value=20.0, step=1.0, key="v424_stop")
+                with v424_target:
+                    v424_ptarget = st.number_input("V4.24 premium target (₹ points)", min_value=0.05, value=40.0, step=1.0, key="v424_target")
+                with v424_lots:
+                    v424_lots_n = st.number_input("V4.24 lots per trade", min_value=1, value=1, step=1, key="v424_lots")
+                v424_cost1, v424_cost2 = st.columns(2)
+                with v424_cost1:
+                    v424_slip = st.number_input("V4.24 slippage per unit per side (₹)", min_value=0.0, value=0.50, step=0.05, key="v424_slippage")
+                with v424_cost2:
+                    v424_broker = st.number_input("V4.24 brokerage estimate per round trip (₹)", min_value=0.0, value=40.0, step=5.0, key="v424_brokerage")
+                schedule_default = "start_date,end_date,lot_size\n2025-12-01,2025-12-23,75\n2025-12-24,2026-10-31,65"
+                schedule_text = st.text_area("Historical lot-size schedule (edit only after checking official contract data)", value=schedule_default, height=100, key="v424_lot_schedule")
+                if opt_expiry_flag != "WEEK" or opt_interval != 5:
+                    st.error("V4.24 is restricted to WEEK expiry and 5-minute option candles. Select WEEK and 5 minutes above.")
+                elif v424_start > v424_end:
+                    st.error("V4.24 start date must be on or before end date.")
+                elif st.button("Run V4.24 full CALL + PUT profitability backtest", type="primary", key="v424_run"):
+                    try:
+                        schedule424 = pd.read_csv(StringIO(schedule_text))
+                        spot424 = add_price_action_signals(opt_hist.copy())
+                        spot424 = add_breakout_retest_signals(spot424, body_min=0.60, close_edge=0.70, max_wait_bars=12)
+                        call424 = pd.read_csv(call_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        put424 = pd.read_csv(put_file, parse_dates=["timestamp"], index_col="timestamp").sort_index()
+                        with st.spinner("Running chronological CALL and PUT option-premium backtests. Please keep this page open..."):
+                            call_trades24, call_metrics24, call_monthly24 = run_v424_backtest(
+                                spot424, call424, "CALL", schedule424, v424_start, v424_end, int(v424_lots_n),
+                                v424_pstop, v424_ptarget, v424_slip, v424_broker)
+                            put_trades24, put_metrics24, put_monthly24 = run_v424_backtest(
+                                spot424, put424, "PUT", schedule424, v424_start, v424_end, int(v424_lots_n),
+                                v424_pstop, v424_ptarget, v424_slip, v424_broker)
+                        st.session_state["v424_results"] = {
+                            "start": str(v424_start), "end": str(v424_end),
+                            "call_trades": call_trades24, "put_trades": put_trades24,
+                            "call_metrics": call_metrics24, "put_metrics": put_metrics24,
+                            "call_monthly": call_monthly24, "put_monthly": put_monthly24,
+                            "expiry": opt_expiry_flag, "expiry_code": int(opt_expiry_code), "interval": int(opt_interval),
+                            "lots": int(v424_lots_n), "stop": float(v424_pstop), "target": float(v424_ptarget),
+                            "slippage": float(v424_slip), "brokerage": float(v424_broker)}
+                        st.success("V4.24 completed. CALL and PUT reports are ready below.")
+                    except Exception as exc:
+                        st.error(f"V4.24 backtest could not complete: {exc}")
+                if "v424_results" in st.session_state:
+                    r24 = st.session_state["v424_results"]
+                    st.markdown(f"### V4.24 results — {r24['start']} to {r24['end']}")
+                    st.caption(f"Weekly expiry sequence {r24['expiry_code']} • 5-minute options • {r24['lots']} lot(s) • premium SL ₹{r24['stop']:.2f} • target ₹{r24['target']:.2f} • slippage ₹{r24['slippage']:.2f}/unit/side • brokerage estimate ₹{r24['brokerage']:.2f}/trade")
+                    summary24 = pd.DataFrame([{"Side": "CALL", **r24["call_metrics"]}, {"Side": "PUT", **r24["put_metrics"]}])
+                    st.markdown("##### CALL vs PUT comparison")
+                    st.dataframe(summary24, hide_index=True, use_container_width=True)
+                    st.download_button("Download V4.24 CALL + PUT comparison", summary24.to_csv(index=False).encode("utf-8"), "v424_call_put_comparison.csv", "text/csv", key="v424_compare_csv")
+                    for side24, key24 in (("CALL", "call"), ("PUT", "put")):
+                        trades24 = r24[f"{key24}_trades"]
+                        monthly24 = r24[f"{key24}_monthly"]
+                        st.markdown(f"##### {side24} — trade report")
+                        st.dataframe(trades24, hide_index=True, use_container_width=True)
+                        st.download_button(f"Download V4.24 {side24} trades CSV", trades24.to_csv(index=False).encode("utf-8"), f"v424_{key24}_trades.csv", "text/csv", key=f"v424_{key24}_trades_csv")
+                        st.markdown(f"##### {side24} — monthly report")
+                        st.dataframe(monthly24, hide_index=True, use_container_width=True)
+                        st.download_button(f"Download V4.24 {side24} monthly CSV", monthly24.to_csv(index=False).encode("utf-8"), f"v424_{key24}_monthly.csv", "text/csv", key=f"v424_{key24}_monthly_csv")
+                    st.caption("V4.24 preserves the V4.13 signal rules. Each position is intraday and is squared off by the existing premium engine; daily position state is therefore carried through each full session. CALL and PUT are tested separately, each with at most one entry per direction per day. No counterfactual trades are added for signals rejected by the daily limit or cutoff.")
+            except Exception as exc:
+                st.error(f"V4.24 module could not be loaded: {exc}")
 
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]

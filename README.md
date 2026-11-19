@@ -240,3 +240,25 @@ does not carry across month boundaries. `ENGINE_SEQUENCE_OR_UNEXPORTED_STATE` is
 an explicit residual category, not a guessed cause; compare the individual ledger
 with trade exports before drawing conclusions. This tool is research-only and does
 not place orders or establish profitability.
+
+## V4.24 — Full CALL + PUT profitability report
+
+V4.24 adds a full chronological historical profitability run for both weekly NIFTY option sides. It preserves the V4.13 Spot signal rules (60% breakout body, 70% close-location threshold, retest within 12 Spot candles) and uses the existing absolute-strike option premium execution engine. CALL and PUT are run separately and exported separately, with a combined comparison table.
+
+### How to run on Render
+
+1. Deploy this V4.24 package to the existing Render service. Keep the existing `/var/data` persistent disk and all existing environment variables unchanged.
+2. Open the **NIFTY Options Buying** tab. Keep expiry type **WEEK**, expiry sequence **Near expiry (1)**, and option timeframe **5 minutes**.
+3. In **V4.24 — Full historical profitability**, select the historical start/end dates. The default is 01-Dec-2025 through 31-Oct-2026.
+4. Review the lot-size schedule. The prefilled 75 units through 23-Dec-2025 and 65 units from 24-Dec-2025 are values previously supplied for this project, not an official exchange verification. Confirm the correct lot size for every historical contract before trusting rupee results. Extend the schedule if you extend the test end date.
+5. Keep the current project assumptions unless intentionally testing a different configuration: premium stop ₹20, target ₹40, one lot, slippage ₹0.50 per unit per side, estimated brokerage ₹40 per round trip.
+6. Press **Run V4.24 full CALL + PUT profitability backtest**. Download the combined comparison, CALL trades/monthly report, and PUT trades/monthly report.
+
+### Method and safeguards
+
+- No Dhan requests are made by V4.24; it reads the already-saved Spot and weekly CE/PE CSV files under the existing data directory.
+- Signals are calculated on the full Spot history before the selected test window, preserving indicator/structure warm-up.
+- The engine runs each trading session chronologically. Positions are intraday and are not carried overnight; CALL and PUT are separate tests with a maximum of one entry per side per day.
+- Missing option candles for any Spot trading day in the selected period cause the run to stop instead of silently presenting partial history as a full backtest.
+- Gross P&L, slippage, estimated brokerage, net P&L, win rate, profit factor, max drawdown, consecutive losses and monthly totals are reported separately by side.
+- Taxes, statutory charges and exchange levies are not represented by the brokerage estimate. This is research only and does not place orders.
