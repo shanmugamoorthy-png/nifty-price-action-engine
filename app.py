@@ -15,8 +15,8 @@ load_dotenv()
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE = os.path.join(DATA_DIR, "nifty_5min.csv")
 st.set_page_config(page_title="NIFTY Pure Price Action V4.21", page_icon="📈", layout="wide")
-st.title("NIFTY Pure Price Action Engine — V4.21 trade reconciliation")
-st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.21 trade reconciliation")
+st.title("NIFTY Pure Price Action Engine — V4.22 resumable reconciliation")
+st.caption("Advanced market structure • BOS / CHoCH / liquidity sweeps • Dhan API • Telegram • V4.12 Spot-volume research • V4.16 append-safe monthly CE/PE history • V4.17 data diagnostics • V4.18 expiry lot-size-aware validation • V4.20 full-history signal diagnostics • V4.22 resumable reconciliation")
 
 with st.sidebar:
     st.header("Dhan connection")
@@ -1028,6 +1028,43 @@ with tabs[5]:
                     st.warning("Signals not entered by the full backtest are a residual category: it can include the one-entry-per-day limit, an already-open position, time cutoffs, and other production-engine sequencing rules. Do not interpret this residual as a single rejection cause.")
             except Exception as exc:
                 st.error(f"V4.21 reconciliation failed: {exc}")
+
+            st.markdown("#### V4.22 — Resumable one-month reconciliation")
+            st.caption("Processes only one month per click, saves each completed month to /var/data, and resumes after a disconnect. No Dhan requests. Monthly runs are diagnostic approximations: position state does not carry between months.")
+            try:
+                from monthly_reconciliation import run_one_month, load_progress, reset_progress, progress_key
+                v422a, v422b = st.columns(2)
+                with v422a:
+                    v422_start = st.date_input("V4.22 start", value=date(2025,12,1), key="v422_start")
+                with v422b:
+                    v422_end = st.date_input("V4.22 end", value=date(2026,10,31), key="v422_end")
+                if v422_start <= v422_end:
+                    key422 = progress_key(v422_start, v422_end, premium_stop, premium_target, call_file, put_file, DATA_FILE)
+                    progress422 = load_progress(DATA_DIR, key422)
+                    months422 = pd.period_range(pd.Timestamp(v422_start).to_period('M'), pd.Timestamp(v422_end).to_period('M'), freq='M')
+                    done422 = set(progress422.keys())
+                    remaining422 = [m for m in months422 if str(m) not in done422]
+                    st.write(f"Completed months: {len(months422)-len(remaining422)} / {len(months422)}")
+                    if remaining422:
+                        st.info(f"Next month: {remaining422[0]}. Press once and wait for completion before continuing.")
+                    if st.button("Process next V4.22 month", disabled=not remaining422, key="v422_next"):
+                        with st.spinner(f"Processing {remaining422[0]} only..."):
+                            run_one_month(DATA_DIR, key422, remaining422[0], DATA_FILE, call_file, put_file,
+                                          v422_start, v422_end, premium_stop, premium_target)
+                        st.success(f"Saved {remaining422[0]} to persistent disk. Press again for the next month.")
+                        st.rerun()
+                    if progress422:
+                        frames422 = [pd.DataFrame(rows) for rows in progress422.values() if rows]
+                        if frames422:
+                            table422 = pd.concat(frames422, ignore_index=True).sort_values(['month','side'])
+                            st.dataframe(table422, hide_index=True, use_container_width=True)
+                            st.download_button("Download V4.22 monthly reconciliation CSV", table422.to_csv(index=False).encode(),
+                                               "v422_monthly_reconciliation.csv", "text/csv", key="v422_export")
+                    st.caption("Completed results survive a web connection failure. To change dates or premium stop/target, a separate progress set is created automatically.")
+                else:
+                    st.error("V4.22 start must be on or before end.")
+            except Exception as exc:
+                st.error(f"V4.22 month processing failed: {exc}")
 
             if "v412_option_results" in st.session_state:
                 vr12 = st.session_state["v412_option_results"]
